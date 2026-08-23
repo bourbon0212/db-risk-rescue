@@ -1,6 +1,6 @@
 """Tests for pipelines/route_search.py (DATA_SPEC.md §5, §8 build sequence
-step 6): direct legs, single-transfer journeys, the departure-time cutoff,
-and the explicit exclusion of multi-transfer journeys.
+step 6, extended to 2 transfers): direct legs, single- and two-transfer
+journeys, the departure-time cutoff, and the still-excluded 3+-transfer case.
 """
 
 from datetime import datetime
@@ -134,7 +134,7 @@ def test_finds_single_transfer_route(mock_dataset):
 
 def test_single_transfer_route_id_references_the_transfer(mock_dataset):
     routes = find_candidate_routes(mock_dataset, "DE_MUC_HBF", "DE_MUC_OST", EARLY)
-    assert routes[0].route_id == "RS_XFER_T4"
+    assert routes[0].route_id == "RS_XFER1_T4"
 
 
 def test_transfer_departure_cutoff_uses_first_legs_departure(mock_dataset):
@@ -145,13 +145,80 @@ def test_transfer_departure_cutoff_uses_first_legs_departure(mock_dataset):
     assert routes == []
 
 
-# --- multi-transfer is explicitly out of scope ---------------------------------
+# --- two-transfer journeys -------------------------------------------------
 
 
-def test_does_not_find_multi_transfer_journeys(mock_dataset):
-    """Munich Hbf -> Berlin Hbf only connects via a 2-transfer chain
-    (L4 -> T2 -> L5 -> T3 -> L6) in mock_data.json -- v1 must not surface it."""
+def test_finds_two_transfer_route(mock_dataset):
+    """Munich Hbf -> Berlin Hbf connects via a 2-transfer chain
+    (L4 -> T2 -> L5 -> T3 -> L6) in mock_data.json -- this is exactly the
+    "one extra hop" case the 2-transfer extension was added to unlock."""
     routes = find_candidate_routes(mock_dataset, "DE_MUC_HBF", "DE_BER_HBF", EARLY)
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.legs == ["L4", "L5", "L6"]
+    assert route.transfers == ["T2", "T3"]
+    assert route.route_id == "RS_XFER2_T2_T3"
+    assert route.origin_station_id == "DE_MUC_HBF"
+    assert route.destination_station_id == "DE_BER_HBF"
+    assert route.scheduled_departure == datetime(2026, 8, 23, 7, 5)
+    assert route.scheduled_arrival == datetime(2026, 8, 23, 12, 25)
+
+
+def test_two_transfer_departure_cutoff_uses_first_legs_departure(mock_dataset):
+    """L4 (the first leg) departs 07:05; a cutoff just after that excludes
+    the whole 3-leg chain."""
+    routes = find_candidate_routes(
+        mock_dataset, "DE_MUC_HBF", "DE_BER_HBF", datetime(2026, 8, 23, 7, 6)
+    )
+    assert routes == []
+
+
+# --- 3+ transfers is still explicitly out of scope --------------------------
+
+
+@pytest.fixture
+def four_leg_chain_dataset() -> MockDataset:
+    """A -> B -> C -> D -> E, needing 3 transfers end to end -- long enough
+    to prove the 2-transfer cap actually holds instead of silently chaining
+    forever."""
+    stations = [Station(station_id=sid, name=sid) for sid in "ABCDE"]
+    pairs = [("A", "B"), ("B", "C"), ("C", "D"), ("D", "E")]
+    legs = [
+        Leg(
+            leg_id=f"L_{a}_{b}",
+            line_id=f"LINE_{a}{b}",
+            origin_station_id=a,
+            destination_station_id=b,
+            scheduled_departure=datetime(2026, 8, 23, 9 + i, 0),
+            scheduled_arrival=datetime(2026, 8, 23, 9 + i, 30),
+            delay_distribution_minutes={"0": 1.0},
+        )
+        for i, (a, b) in enumerate(pairs)
+    ]
+    transfers = [
+        Transfer(
+            transfer_id=f"TR_{a}{b}_{b}{c}",
+            station_id=b,
+            from_leg_id=f"L_{a}_{b}",
+            to_leg_id=f"L_{b}_{c}",
+            scheduled_buffer_minutes=10,
+        )
+        for (a, b), (b2, c) in zip(pairs, pairs[1:])
+    ]
+    return MockDataset(stations=stations, lines=[], legs=legs, transfers=transfers, routes=[])
+
+
+def test_finds_two_transfer_route_within_a_longer_chain(four_leg_chain_dataset):
+    """A -> D needs exactly 2 transfers (3 legs) -- within the cap."""
+    routes = find_candidate_routes(four_leg_chain_dataset, "A", "D", EARLY)
+    assert len(routes) == 1
+    assert routes[0].legs == ["L_A_B", "L_B_C", "L_C_D"]
+    assert routes[0].transfers == ["TR_AB_BC", "TR_BC_CD"]
+
+
+def test_does_not_find_three_transfer_journeys(four_leg_chain_dataset):
+    """A -> E needs 3 transfers (4 legs) -- past the cap, must not appear."""
+    routes = find_candidate_routes(four_leg_chain_dataset, "A", "E", EARLY)
     assert routes == []
 
 
@@ -169,7 +236,7 @@ def test_dangling_transfer_reference_is_skipped_not_raised(synthetic_dataset):
         update={"transfers": [*synthetic_dataset.transfers, broken_transfer]}
     )
     routes = find_candidate_routes(dataset, "A", "C", EARLY)
-    assert {r.route_id for r in routes} == {"RS_DIRECT_L_DIRECT", "RS_XFER_TR1"}
+    assert {r.route_id for r in routes} == {"RS_DIRECT_L_DIRECT", "RS_XFER1_TR1"}
 
 
 # --- combined direct + transfer results, ordering -------------------------------
@@ -177,7 +244,7 @@ def test_dangling_transfer_reference_is_skipped_not_raised(synthetic_dataset):
 
 def test_direct_and_transfer_routes_are_both_returned_and_sorted(synthetic_dataset):
     routes = find_candidate_routes(synthetic_dataset, "A", "C", EARLY)
-    assert [r.route_id for r in routes] == ["RS_XFER_TR1", "RS_DIRECT_L_DIRECT"]
+    assert [r.route_id for r in routes] == ["RS_XFER1_TR1", "RS_DIRECT_L_DIRECT"]
     assert [r.scheduled_departure for r in routes] == [
         datetime(2026, 8, 23, 9, 0),
         datetime(2026, 8, 23, 10, 0),

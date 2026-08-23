@@ -108,8 +108,8 @@ candidate_routes, results_by_route = search_and_simulate(
 
 if not candidate_routes:
     st.info(
-        "No direct or single-transfer routes match that search (v1 route search doesn't "
-        "chain multiple transfers). Try an earlier departure time or a different pair of stations."
+        "No routes with up to 2 transfers match that search. Try an earlier departure time "
+        "or a different pair of stations."
     )
     st.stop()
 
