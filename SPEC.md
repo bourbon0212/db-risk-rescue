@@ -1,7 +1,7 @@
 # DB Risk & Rescue — System Design Specification
 
 **Phase:** System Design (pre-implementation)
-**Date:** 2026-08-23 (revised same day — §2.6 added, §3.2 Step 4 amended)
+**Date:** 2026-08-23 (revised same day — §2.6 added, §3.2 Step 4 amended); revised 2026-08-24 — §3.4 added, promoting "best-alternative-route re-search on miss" from §5 into v1 scope now that the 2-transfer route search (DATA_SPEC.md §5, §8) gives it real candidate routes to search over.
 **Status:** Consensus reached — ready for prototyping phase
 
 ## 1. Objective
@@ -142,6 +142,14 @@ After N iterations, report:
 
 Both values, plus the per-transfer miss probabilities from §3.1, are what the UI renders (§4).
 
+### 3.4 Dynamic Re-routing on Miss (v1.1)
+
+When §3.2 Step 4 triggers (a transfer is missed), rather than always waiting for the next periodic departure of the *same* downstream line, first search for a better alternative: the best candidate route from the missed transfer's station to the journey's final destination, using the existing route search (DATA_SPEC.md §5, §8) subject to a **reduced remaining transfer budget** (the app-wide 2-transfer cap, minus the transfers already used reaching the missed connection). If such a route exists, the simulation switches onto it for the remainder of that iteration; if none exists, it falls back to the original §3.2 Step 4 same-line-headway wait unchanged.
+
+This route search is **not** re-run per Monte Carlo iteration — it is prohibitively expensive at N=1,000+ iterations. Instead, for a given route, the best fallback (if any) is **pre-computed once per transfer node before the simulation loop starts**, and each iteration performs only an O(1) cache lookup on miss.
+
+Scope boundary: this is one level of re-routing. If a transfer *within* a fallback route is itself missed, that nested miss resolves via the original same-line-headway wait (§3.2 Step 4), not a second re-routing search — unbounded recursive re-pathfinding remains deferred (§5).
+
 ## 4. UI Layout (Streamlit Dashboard)
 
 ### 4.1 Input Flow
@@ -170,7 +178,7 @@ These were raised and deliberately deferred during design consensus, to keep v1 
 - **Correlated delay sampling** — same-physical-train carryover between legs, and/or regional "bad day" latent factors shared across legs on the same network.
 - **Minimum Connection Time (MCT)** as a station-level property distinct from scheduled buffer, to flag connections that are risky even with zero delay (e.g. tight platform changes at large hubs).
 - **Platform-change flag** on transfers as a cheaper proxy for MCT.
-- **Best-alternative-route re-search on miss** — instead of assuming the next departure on the same line, re-run pathfinding across all available lines from the failed station.
+- **Unbounded recursive re-routing** — §3.4 (added 2026-08-24) covers exactly one re-routing search per missed transfer; a miss *within* a fallback route still resolves via the same-line-headway wait rather than searching again.
 - **Advanced simulation controls** in the UI — exposing iteration count, risk-aversion weighting, or minimum acceptable buffer to the user.
 - **Full distribution histogram output** per route, instead of just mean + percentile band.
 

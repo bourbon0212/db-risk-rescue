@@ -7,7 +7,7 @@ from pathlib import Path
 import streamlit as st
 
 from data_loader import MOCK_DATA_PATH, REAL_DATA_PATH, load_dataset
-from engine import RouteSimulationResult, index_dataset, simulate_route
+from engine import RouteSimulationResult, index_dataset, precompute_fallback_plans, simulate_route
 from models import MockDataset, Route
 from pipelines.route_search import find_candidate_routes
 from ui_components import render_header_banner, render_route_card, render_route_timeline
@@ -59,6 +59,7 @@ def search_and_simulate(
         route.route_id: simulate_route(
             route, legs_by_id, transfers_by_id, lines_by_id,
             n_iterations=n_iterations, rng=random.Random(seed),
+            fallback_plans=precompute_fallback_plans(route, dataset, legs_by_id, transfers_by_id),
         )
         for route in candidate_routes
     }

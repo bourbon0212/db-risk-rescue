@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from models import Leg, Line, MockDataset, Route, Transfer
+from pipelines.route_search import find_candidate_routes
 
 # SPEC.md §2.6 — static lookup, not part of the mock JSON.
 SERVICE_FREQUENCY_MINUTES: dict[str, int] = {
@@ -15,6 +16,9 @@ SERVICE_FREQUENCY_MINUTES: dict[str, int] = {
     "RB": 60,
     "S-Bahn": 20,
 }
+
+# SPEC.md §3.4 — must stay in sync with pipelines/route_search.py's 2-transfer cap.
+MAX_TOTAL_TRANSFERS = 2
 
 
 def get_headway_minutes(line_type: str) -> int:
@@ -32,6 +36,74 @@ def index_dataset(
     transfers_by_id = {t.transfer_id: t for t in dataset.transfers}
     lines_by_id = {line.line_id: line for line in dataset.lines}
     return legs_by_id, transfers_by_id, lines_by_id
+
+
+@dataclass
+class FallbackPlan:
+    """SPEC.md §3.4 — the best alternative Route from a transfer's station to
+    the journey's final destination, pre-resolved to Leg/Transfer objects so
+    the Monte Carlo loop never has to look them up by id mid-iteration."""
+
+    route: Route
+    legs: list[Leg]
+    transfers: list[Transfer]
+
+
+def precompute_fallback_plans(
+    route: Route,
+    dataset: MockDataset,
+    legs_by_id: dict[str, Leg],
+    transfers_by_id: dict[str, Transfer],
+) -> dict[str, FallbackPlan | None]:
+    """SPEC.md §3.4 — one fallback lookup per transfer node in `route`,
+    computed once before the Monte Carlo loop so a missed connection is an
+    O(1) cache hit during simulation rather than a fresh pathfinding query
+    on every iteration.
+
+    For the transfer at index i, the fallback search is subject to a
+    remaining transfer budget of MAX_TOTAL_TRANSFERS - (i + 1) — the
+    network-wide cap minus the transfers already used reaching that
+    station. A transfer with no surviving candidate route maps to None,
+    meaning simulate_route falls back to the static same-line-headway wait
+    (§3.2 Step 4) for that node, unchanged.
+    """
+    ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
+    ordered_transfers = [transfers_by_id[t_id] for t_id in route.transfers]
+
+    plans: dict[str, FallbackPlan | None] = {}
+    for i, transfer in enumerate(ordered_transfers):
+        downstream_leg = ordered_legs[i + 1]
+        remaining_budget = MAX_TOTAL_TRANSFERS - (i + 1)
+
+        candidates = find_candidate_routes(
+            dataset,
+            transfer.station_id,
+            route.destination_station_id,
+            downstream_leg.scheduled_departure,
+        )
+        candidates = [
+            c
+            for c in candidates
+            if len(c.transfers) <= remaining_budget
+            # A candidate that starts by boarding the exact leg that was
+            # just missed isn't a real alternative -- that leg has already
+            # departed without the passenger. Fall through to the static
+            # same-line-headway wait for that case instead.
+            and c.legs[0] != downstream_leg.leg_id
+        ]
+
+        if not candidates:
+            plans[transfer.transfer_id] = None
+            continue
+
+        best = min(candidates, key=lambda c: (c.scheduled_arrival, c.route_id))
+        plans[transfer.transfer_id] = FallbackPlan(
+            route=best,
+            legs=[legs_by_id[leg_id] for leg_id in best.legs],
+            transfers=[transfers_by_id[t_id] for t_id in best.transfers],
+        )
+
+    return plans
 
 
 def sample_delay_minutes(distribution: dict[str, float], rng: random.Random) -> int:
@@ -105,8 +177,17 @@ def simulate_route(
     lines_by_id: dict[str, Line],
     n_iterations: int = 1000,
     rng: random.Random | None = None,
+    fallback_plans: dict[str, FallbackPlan | None] | None = None,
 ) -> RouteSimulationResult:
-    """SPEC.md §3.2 — Monte Carlo simulation of a route's realized arrival time."""
+    """SPEC.md §3.2 — Monte Carlo simulation of a route's realized arrival time.
+
+    `fallback_plans` (SPEC.md §3.4), if given, is a {transfer_id: FallbackPlan
+    or None} cache from precompute_fallback_plans() for this same route. When
+    a transfer is missed and a fallback plan exists, that iteration switches
+    onto the fallback route's legs/transfers for its remainder instead of
+    waiting for the next same-line departure. Omitting it (the default)
+    reproduces the original §3.2 Step 4 behavior exactly.
+    """
     if rng is None:
         rng = random.Random()
 
@@ -131,28 +212,55 @@ def simulate_route(
     miss_counts = [0] * len(ordered_transfers)
 
     for _ in range(n_iterations):
-        first_leg = ordered_legs[0]
+        # Swapped onto a FallbackPlan's legs/transfers on a §3.4 re-route;
+        # miss_counts (sized to the original route) is only ever indexed
+        # while current_legs/current_transfers are still the original ones.
+        current_legs = ordered_legs
+        current_transfers = ordered_transfers
+        leg_idx = 0
+
+        first_leg = current_legs[0]
         delay = sample_delay_minutes(first_leg.delay_distribution_minutes, rng)
         realized_arrival = first_leg.scheduled_arrival + timedelta(minutes=delay)
 
-        for i, transfer in enumerate(ordered_transfers):
-            downstream_leg = ordered_legs[i + 1]
+        while leg_idx < len(current_transfers):
+            transfer = current_transfers[leg_idx]
+            downstream_leg = current_legs[leg_idx + 1]
 
             if realized_arrival <= downstream_leg.scheduled_departure:
                 # Step 3: connection holds — downstream leg departs on schedule.
                 delay = sample_delay_minutes(downstream_leg.delay_distribution_minutes, rng)
                 realized_arrival = downstream_leg.scheduled_arrival + timedelta(minutes=delay)
-            else:
-                # Step 4: connection missed — resolve via next periodic departure.
-                miss_counts[i] += 1
-                line_type = lines_by_id[downstream_leg.line_id].type
-                headway = get_headway_minutes(line_type)
-                next_departure = _next_periodic_departure(
-                    downstream_leg.scheduled_departure, realized_arrival, headway
-                )
-                leg_duration = downstream_leg.scheduled_arrival - downstream_leg.scheduled_departure
-                fresh_delay = sample_delay_minutes(downstream_leg.delay_distribution_minutes, rng)
-                realized_arrival = next_departure + leg_duration + timedelta(minutes=fresh_delay)
+                leg_idx += 1
+                continue
+
+            # Step 4: connection missed.
+            if current_legs is ordered_legs:
+                miss_counts[leg_idx] += 1
+
+            fallback = fallback_plans.get(transfer.transfer_id) if fallback_plans else None
+            if fallback is not None:
+                # §3.4: switch onto the pre-computed best alternative route
+                # from here to the destination for the rest of this iteration.
+                current_legs = fallback.legs
+                current_transfers = fallback.transfers
+                leg_idx = 0
+                first_leg = current_legs[0]
+                delay = sample_delay_minutes(first_leg.delay_distribution_minutes, rng)
+                realized_arrival = first_leg.scheduled_arrival + timedelta(minutes=delay)
+                continue
+
+            # No fallback available — resolve via next periodic departure
+            # of the same downstream line (unchanged §3.2 Step 4).
+            line_type = lines_by_id[downstream_leg.line_id].type
+            headway = get_headway_minutes(line_type)
+            next_departure = _next_periodic_departure(
+                downstream_leg.scheduled_departure, realized_arrival, headway
+            )
+            leg_duration = downstream_leg.scheduled_arrival - downstream_leg.scheduled_departure
+            fresh_delay = sample_delay_minutes(downstream_leg.delay_distribution_minutes, rng)
+            realized_arrival = next_departure + leg_duration + timedelta(minutes=fresh_delay)
+            leg_idx += 1
 
         simulated_arrivals.append(realized_arrival)
 
