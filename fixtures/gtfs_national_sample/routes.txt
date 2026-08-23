@@ -1,0 +1,6 @@
+route_id,agency_id,route_short_name,route_long_name,route_type
+ROUTE_A,1,ICE 100,Corridor ICE,101
+ROUTE_B,2,RJ 60,Non-DB railjet,102
+ROUTE_C,1,NJ 420,DB Nightjet (unsupported type),105
+ROUTE_D,3,RE 5,Corridor RE,106
+ROUTE_E,1,ICE 200,Never touches corridor,101

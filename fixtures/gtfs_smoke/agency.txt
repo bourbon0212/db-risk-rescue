@@ -1,0 +1,3 @@
+agency_id,agency_name,agency_url,agency_timezone
+DB_FV,DB Fernverkehr,https://www.bahn.de,Europe/Berlin
+DB_RE,DB Regio,https://www.bahn.de,Europe/Berlin

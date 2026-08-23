@@ -6,6 +6,7 @@ from pathlib import Path
 from models import MockDataset
 
 MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
+REAL_DATA_PATH = Path(__file__).parent / "data" / "real_dataset.json"
 
 
 def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:

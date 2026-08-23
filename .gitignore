@@ -5,3 +5,10 @@ __pycache__/
 .env
 .agents/
 .claude/skills/
+
+# Phase 2 raw data downloads (pipelines/download_raw_data.py) -- large,
+# regenerable, not meant to live in git. data/real_dataset.json (the
+# pipeline's OUTPUT) is deliberately NOT excluded here.
+data/raw/
+*.parquet
+*.zip

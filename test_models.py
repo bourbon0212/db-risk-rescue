@@ -17,11 +17,11 @@ def raw_data() -> dict:
 
 def test_mock_data_loads_and_validates(raw_data):
     dataset = MockDataset.model_validate(raw_data)
-    assert len(dataset.stations) == 5
-    assert len(dataset.lines) == 3
-    assert len(dataset.legs) == 3
-    assert len(dataset.transfers) == 1
-    assert len(dataset.routes) == 2
+    assert len(dataset.stations) == 11
+    assert len(dataset.lines) == 8
+    assert len(dataset.legs) == 8
+    assert len(dataset.transfers) == 4
+    assert len(dataset.routes) == 4
 
 
 def test_station_ids_are_unique(raw_data):

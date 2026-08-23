@@ -4,12 +4,23 @@
     { "station_id": "DE_KOL_HBF", "name": "Köln Hbf" },
     { "station_id": "DE_STG_HBF", "name": "Stuttgart Hbf" },
     { "station_id": "DE_MAN_HBF", "name": "Mannheim Hbf" },
-    { "station_id": "DE_HEI_HBF", "name": "Heidelberg Hbf" }
+    { "station_id": "DE_HEI_HBF", "name": "Heidelberg Hbf" },
+    { "station_id": "DE_MUC_HBF", "name": "München Hbf" },
+    { "station_id": "DE_NUE_HBF", "name": "Nürnberg Hbf" },
+    { "station_id": "DE_LEI_HBF", "name": "Leipzig Hbf" },
+    { "station_id": "DE_BER_HBF", "name": "Berlin Hbf" },
+    { "station_id": "DE_MUC_MAR", "name": "München Marienplatz" },
+    { "station_id": "DE_MUC_OST", "name": "München Ost" }
   ],
   "lines": [
     { "line_id": "ICE_15", "type": "ICE", "operator": "DB Fernverkehr" },
     { "line_id": "ICE_22", "type": "ICE", "operator": "DB Fernverkehr" },
-    { "line_id": "RE_1", "type": "RE", "operator": "DB Regio" }
+    { "line_id": "RE_1", "type": "RE", "operator": "DB Regio" },
+    { "line_id": "ICE_10", "type": "ICE", "operator": "DB Fernverkehr" },
+    { "line_id": "RE_8", "type": "RE", "operator": "DB Regio" },
+    { "line_id": "ICE_11", "type": "ICE", "operator": "DB Fernverkehr" },
+    { "line_id": "S_8", "type": "S-Bahn", "operator": "DB Regio" },
+    { "line_id": "S_4", "type": "S-Bahn", "operator": "DB Regio" }
   ],
   "legs": [
     {
@@ -55,6 +66,79 @@
         "15": 0.10,
         "30": 0.05
       }
+    },
+    {
+      "leg_id": "L4",
+      "line_id": "ICE_10",
+      "origin_station_id": "DE_MUC_HBF",
+      "destination_station_id": "DE_NUE_HBF",
+      "scheduled_departure": "2026-08-23T07:05:00",
+      "scheduled_arrival": "2026-08-23T08:12:00",
+      "delay_distribution_minutes": {
+        "0": 0.55,
+        "5": 0.20,
+        "15": 0.13,
+        "30": 0.08,
+        "60": 0.04
+      }
+    },
+    {
+      "leg_id": "L5",
+      "line_id": "RE_8",
+      "origin_station_id": "DE_NUE_HBF",
+      "destination_station_id": "DE_LEI_HBF",
+      "scheduled_departure": "2026-08-23T08:18:00",
+      "scheduled_arrival": "2026-08-23T11:01:00",
+      "delay_distribution_minutes": {
+        "0": 0.45,
+        "5": 0.20,
+        "15": 0.15,
+        "30": 0.12,
+        "60": 0.08
+      }
+    },
+    {
+      "leg_id": "L6",
+      "line_id": "ICE_11",
+      "origin_station_id": "DE_LEI_HBF",
+      "destination_station_id": "DE_BER_HBF",
+      "scheduled_departure": "2026-08-23T11:10:00",
+      "scheduled_arrival": "2026-08-23T12:25:00",
+      "delay_distribution_minutes": {
+        "0": 0.58,
+        "5": 0.19,
+        "15": 0.12,
+        "30": 0.07,
+        "60": 0.04
+      }
+    },
+    {
+      "leg_id": "L7",
+      "line_id": "S_8",
+      "origin_station_id": "DE_MUC_HBF",
+      "destination_station_id": "DE_MUC_MAR",
+      "scheduled_departure": "2026-08-23T08:15:00",
+      "scheduled_arrival": "2026-08-23T08:20:00",
+      "delay_distribution_minutes": {
+        "0": 0.65,
+        "3": 0.20,
+        "8": 0.10,
+        "15": 0.05
+      }
+    },
+    {
+      "leg_id": "L8",
+      "line_id": "S_4",
+      "origin_station_id": "DE_MUC_MAR",
+      "destination_station_id": "DE_MUC_OST",
+      "scheduled_departure": "2026-08-23T08:22:00",
+      "scheduled_arrival": "2026-08-23T08:29:00",
+      "delay_distribution_minutes": {
+        "0": 0.60,
+        "3": 0.18,
+        "8": 0.12,
+        "15": 0.10
+      }
     }
   ],
   "transfers": [
@@ -64,6 +148,27 @@
       "from_leg_id": "L2",
       "to_leg_id": "L3",
       "scheduled_buffer_minutes": 8
+    },
+    {
+      "transfer_id": "T2",
+      "station_id": "DE_NUE_HBF",
+      "from_leg_id": "L4",
+      "to_leg_id": "L5",
+      "scheduled_buffer_minutes": 6
+    },
+    {
+      "transfer_id": "T3",
+      "station_id": "DE_LEI_HBF",
+      "from_leg_id": "L5",
+      "to_leg_id": "L6",
+      "scheduled_buffer_minutes": 9
+    },
+    {
+      "transfer_id": "T4",
+      "station_id": "DE_MUC_MAR",
+      "from_leg_id": "L7",
+      "to_leg_id": "L8",
+      "scheduled_buffer_minutes": 2
     }
   ],
   "routes": [
@@ -84,6 +189,24 @@
       "destination_station_id": "DE_HEI_HBF",
       "scheduled_departure": "2026-08-23T09:10:00",
       "scheduled_arrival": "2026-08-23T10:26:00"
+    },
+    {
+      "route_id": "R3",
+      "legs": ["L4", "L5", "L6"],
+      "transfers": ["T2", "T3"],
+      "origin_station_id": "DE_MUC_HBF",
+      "destination_station_id": "DE_BER_HBF",
+      "scheduled_departure": "2026-08-23T07:05:00",
+      "scheduled_arrival": "2026-08-23T12:25:00"
+    },
+    {
+      "route_id": "R4",
+      "legs": ["L7", "L8"],
+      "transfers": ["T4"],
+      "origin_station_id": "DE_MUC_HBF",
+      "destination_station_id": "DE_MUC_OST",
+      "scheduled_departure": "2026-08-23T08:15:00",
+      "scheduled_arrival": "2026-08-23T08:29:00"
     }
   ]
 }

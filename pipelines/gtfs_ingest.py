@@ -1,0 +1,227 @@
+"""GTFS.DE static feed ingestion into Station/Line/Leg/Transfer models.
+
+Per DATA_SPEC.md Section 3 and Section 8 (build sequence steps 1-2).
+"""
+
+import csv
+from collections import defaultdict
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+from models import Leg, Line, Station, Transfer
+
+# Exact strings engine.py's SERVICE_FREQUENCY_MINUTES keys on (DATA_SPEC.md §3.1).
+LINE_TYPES = frozenset({"ICE", "IC", "RE", "RB", "S-Bahn"})
+
+# GTFS "extended route types" fallback, used only when route_short_name
+# doesn't carry a recognizable prefix. Extended route 106 ("Regional Rail
+# Service") does not distinguish RE from RB, so it has no fallback entry —
+# that split can only come from route_short_name.
+_ROUTE_TYPE_FALLBACK = {
+    "101": "ICE",  # High Speed Rail Service
+    "102": "IC",  # Long Distance Trains
+    "103": "IC",  # Inter Regional Rail Service
+    "109": "S-Bahn",  # Suburban Railway
+}
+
+
+def _normalize_line_type(route_short_name: str, route_type: str) -> str:
+    """Normalize a GTFS route to one of LINE_TYPES, or raise ValueError.
+
+    route_short_name is authoritative (it's the only signal that can tell RE
+    apart from RB); route_type is a fallback for the rare row with no usable
+    short name. Anything neither can resolve fails loudly, per DATA_SPEC.md
+    §3.1: a bad line type must never reach engine.py at simulation time.
+    """
+    prefix = route_short_name.strip().upper()
+    if prefix.startswith("ICE"):
+        return "ICE"
+    if prefix.startswith("IC") or prefix.startswith("EC"):
+        return "IC"
+    if prefix.startswith("RE"):
+        return "RE"
+    if prefix.startswith("RB"):
+        return "RB"
+    if len(prefix) >= 2 and prefix[0] == "S" and prefix[1].isdigit():
+        return "S-Bahn"
+
+    fallback = _ROUTE_TYPE_FALLBACK.get(route_type.strip())
+    if fallback is not None:
+        return fallback
+
+    raise ValueError(
+        "Cannot normalize GTFS route to a known line type: "
+        f"route_short_name={route_short_name!r}, route_type={route_type!r}"
+    )
+
+
+def parse_stations(gtfs_dir: Path) -> list[Station]:
+    """One GTFS parent station (location_type=1) -> one Station.
+
+    Individual platform/stop rows (location_type 0 or blank) are skipped;
+    DATA_SPEC.md §3 step 3 calls for the parent station only.
+    """
+    stations = []
+    with (gtfs_dir / "stops.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            if row.get("location_type", "").strip() != "1":
+                continue
+            stations.append(Station(station_id=row["stop_id"], name=row["stop_name"]))
+    return stations
+
+
+def _line_id_for_route(route_short_name: str, route_id: str) -> str:
+    """Derive the human-readable Line.line_id we expose from a GTFS route.
+
+    Leg.line_id is what ui_components.py's timeline prints verbatim, so it
+    needs to be display-friendly -- space-separated ("ICE 15", "RE 1"),
+    matching DB Navigator / platform-display conventions, not the opaque raw
+    GTFS route_id ("ROUTE_ICE15" or similar internal feed identifier) and
+    not underscore-joined. Falls back to route_id only if route_short_name
+    is blank. Any internal whitespace is collapsed to a single space.
+    """
+    short_name = route_short_name.strip()
+    return " ".join(short_name.split()) if short_name else route_id
+
+
+def _load_route_line_ids(gtfs_dir: Path) -> dict[str, str]:
+    """Map every GTFS route_id to its display-friendly line_id, so
+    parse_lines and parse_legs agree on the same Line.line_id / Leg.line_id
+    values instead of drifting apart."""
+    mapping: dict[str, str] = {}
+    with (gtfs_dir / "routes.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            mapping[row["route_id"]] = _line_id_for_route(
+                row.get("route_short_name", ""), row["route_id"]
+            )
+    return mapping
+
+
+def parse_lines(gtfs_dir: Path) -> list[Line]:
+    """One GTFS route -> one Line, with type normalized per §3.1."""
+    agency_names: dict[str, str] = {}
+    agency_path = gtfs_dir / "agency.txt"
+    if agency_path.exists():
+        with agency_path.open(encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                agency_names[row["agency_id"]] = row["agency_name"]
+
+    lines = []
+    with (gtfs_dir / "routes.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            line_type = _normalize_line_type(
+                row.get("route_short_name", ""), row.get("route_type", "")
+            )
+            agency_id = row.get("agency_id", "")
+            operator = agency_names.get(agency_id, agency_id)
+            line_id = _line_id_for_route(row.get("route_short_name", ""), row["route_id"])
+            lines.append(Line(line_id=line_id, type=line_type, operator=operator))
+    return lines
+
+
+def _parse_gtfs_time(time_str: str, service_date: date) -> datetime:
+    """Convert a GTFS HH:MM:SS time (hours may exceed 23 for post-midnight
+    trips) into a full datetime anchored on service_date."""
+    hours, minutes, seconds = (int(x) for x in time_str.strip().split(":"))
+    midnight = datetime.combine(service_date, datetime.min.time())
+    return midnight + timedelta(hours=hours, minutes=minutes, seconds=seconds)
+
+
+def _load_stop_to_station_map(gtfs_dir: Path) -> dict[str, str]:
+    """Map every GTFS stop_id to its parent station's stop_id.
+
+    A stop with no parent_station is its own station (mirrors parse_stations'
+    treatment of location_type=1 rows).
+    """
+    mapping: dict[str, str] = {}
+    with (gtfs_dir / "stops.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            parent = row.get("parent_station", "").strip()
+            mapping[row["stop_id"]] = parent if parent else row["stop_id"]
+    return mapping
+
+
+def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
+    """Walk each trip's stop_times in sequence, turning every consecutive
+    stop pair into a Leg (DATA_SPEC.md §3 step 5).
+
+    delay_distribution_minutes is a placeholder here; Pipeline 2
+    (delay_aggregation.py) overwrites it with real empirical distributions.
+    """
+    stop_to_station = _load_stop_to_station_map(gtfs_dir)
+    route_line_ids = _load_route_line_ids(gtfs_dir)
+
+    trip_to_line: dict[str, str] = {}
+    with (gtfs_dir / "trips.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            trip_to_line[row["trip_id"]] = route_line_ids[row["route_id"]]
+
+    stop_times_by_trip: dict[str, list[dict]] = defaultdict(list)
+    with (gtfs_dir / "stop_times.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            stop_times_by_trip[row["trip_id"]].append(row)
+
+    legs = []
+    for trip_id, rows in stop_times_by_trip.items():
+        rows.sort(key=lambda r: int(r["stop_sequence"]))
+        line_id = trip_to_line[trip_id]
+        for i in range(len(rows) - 1):
+            origin_row, dest_row = rows[i], rows[i + 1]
+            legs.append(
+                Leg(
+                    leg_id=f"{trip_id}::{i}",
+                    line_id=line_id,
+                    origin_station_id=stop_to_station[origin_row["stop_id"]],
+                    destination_station_id=stop_to_station[dest_row["stop_id"]],
+                    scheduled_departure=_parse_gtfs_time(
+                        origin_row["departure_time"], service_date
+                    ),
+                    scheduled_arrival=_parse_gtfs_time(dest_row["arrival_time"], service_date),
+                    delay_distribution_minutes={"0": 1.0},
+                )
+            )
+    return legs
+
+
+def _trip_id_of(leg_id: str) -> str:
+    """Recover the trip_id encoded in a parse_legs-produced leg_id."""
+    return leg_id.rsplit("::", 1)[0]
+
+
+def derive_transfers(
+    legs: list[Leg], min_window_minutes: int = 2, max_window_minutes: int = 60
+) -> list[Transfer]:
+    """Derive Transfers from arriving/departing leg pairs at the same station
+    whose gap falls within [min_window_minutes, max_window_minutes]
+    (DATA_SPEC.md §3 step 6, §7.4).
+
+    A departing leg that's just the same trip continuing through the station
+    is not a transfer, even if its gap happens to fall in the window.
+    """
+    arrivals_by_station: dict[str, list[Leg]] = defaultdict(list)
+    departures_by_station: dict[str, list[Leg]] = defaultdict(list)
+    for leg in legs:
+        arrivals_by_station[leg.destination_station_id].append(leg)
+        departures_by_station[leg.origin_station_id].append(leg)
+
+    transfers = []
+    for station_id, arriving_legs in arrivals_by_station.items():
+        for arriving in arriving_legs:
+            for departing in departures_by_station.get(station_id, []):
+                if _trip_id_of(arriving.leg_id) == _trip_id_of(departing.leg_id):
+                    continue
+                buffer_minutes = int(
+                    (departing.scheduled_departure - arriving.scheduled_arrival).total_seconds()
+                    // 60
+                )
+                if min_window_minutes <= buffer_minutes <= max_window_minutes:
+                    transfers.append(
+                        Transfer(
+                            transfer_id=f"TR_{arriving.leg_id}__{departing.leg_id}",
+                            station_id=station_id,
+                            from_leg_id=arriving.leg_id,
+                            to_leg_id=departing.leg_id,
+                            scheduled_buffer_minutes=buffer_minutes,
+                        )
+                    )
+    return transfers

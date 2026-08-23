@@ -1,0 +1,6 @@
+route_id,agency_id,route_short_name,route_long_name,route_type
+ROUTE_ICE15,DB_FV,ICE 15,Frankfurt - Köln,101
+ROUTE_IC61,DB_FV,IC 61,Frankfurt - München,102
+ROUTE_RE1,DB_RE,RE 1,Frankfurt - Köln,106
+ROUTE_RB27,DB_RE,RB 27,Frankfurt - Köln,106
+ROUTE_S8,DB_RE,S8,München - Ost,109

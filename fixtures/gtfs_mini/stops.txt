@@ -1,0 +1,6 @@
+stop_id,stop_name,parent_station,location_type
+DE_FRA_HBF,Frankfurt(Main)Hbf,,1
+DE_FRA_HBF_PLAT_7,Frankfurt(Main)Hbf Gleis 7,DE_FRA_HBF,0
+DE_KOL_HBF,Köln Hbf,,1
+DE_KOL_HBF_PLAT_3,Köln Hbf Gleis 3,DE_KOL_HBF,0
+DE_MUC_HBF,München Hbf,,1

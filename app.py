@@ -1,11 +1,15 @@
 """DB Risk & Rescue — Streamlit dashboard (SPEC.md Section 4)."""
 
 import random
+from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
-from data_loader import load_dataset
+from data_loader import MOCK_DATA_PATH, REAL_DATA_PATH, load_dataset
 from engine import RouteSimulationResult, index_dataset, simulate_route
+from models import MockDataset, Route
+from pipelines.route_search import find_candidate_routes
 from ui_components import render_header_banner, render_route_card, render_route_timeline
 
 N_ITERATIONS = 1000
@@ -13,66 +17,101 @@ RNG_SEED = 42  # fixed seed keeps ETAs stable across Streamlit reruns
 
 st.set_page_config(page_title="DB Risk & Rescue", page_icon="🚆", layout="wide")
 
+# DATA_SPEC.md §6 — sidebar toggle for A/B comparing the Phase 1 mock
+# timetable against the Phase 2 GTFS pipeline output during development.
+DATA_SOURCES = {
+    "Phase 1 — mock_data.json": MOCK_DATA_PATH,
+    "Phase 2 — real_dataset.json (GTFS pipeline)": REAL_DATA_PATH,
+}
+with st.sidebar:
+    st.caption("Data source")
+    data_source_label = st.radio(
+        "Data source", list(DATA_SOURCES), index=0, label_visibility="collapsed"
+    )
+data_source_path = DATA_SOURCES[data_source_label]
+
+if data_source_path == REAL_DATA_PATH and not REAL_DATA_PATH.exists():
+    st.sidebar.warning(
+        "data/real_dataset.json not found — run `python -m pipelines.build_dataset` "
+        "first. Falling back to mock_data.json for now."
+    )
+    data_source_path = MOCK_DATA_PATH
+
 
 @st.cache_data
-def get_dataset():
-    return load_dataset()
+def get_dataset(path: Path) -> MockDataset:
+    return load_dataset(path)
 
 
-@st.cache_data(show_spinner="Running Monte Carlo simulation...")
-def simulate_all_routes(n_iterations: int, seed: int) -> dict[str, RouteSimulationResult]:
-    dataset = get_dataset()
+@st.cache_data(show_spinner="Searching the timetable and running Monte Carlo simulation...")
+def search_and_simulate(
+    path: Path,
+    origin_id: str,
+    destination_id: str,
+    departure_time: datetime,
+    n_iterations: int,
+    seed: int,
+) -> tuple[list[Route], dict[str, RouteSimulationResult]]:
+    dataset = get_dataset(path)
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
-    return {
+    candidate_routes = find_candidate_routes(dataset, origin_id, destination_id, departure_time)
+    results = {
         route.route_id: simulate_route(
             route, legs_by_id, transfers_by_id, lines_by_id,
             n_iterations=n_iterations, rng=random.Random(seed),
         )
-        for route in dataset.routes
+        for route in candidate_routes
     }
+    return candidate_routes, results
 
 
-dataset = get_dataset()
+dataset = get_dataset(data_source_path)
 legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
 stations_by_id = {s.station_id: s for s in dataset.stations}
-results_by_route = simulate_all_routes(N_ITERATIONS, RNG_SEED)
 
 render_header_banner(N_ITERATIONS)
 
 # --- §4.1 Input flow ---------------------------------------------------------
 st.subheader("Plan your trip")
 
+if not dataset.legs:
+    st.warning("The selected dataset has no legs to search.")
+    st.stop()
+
 station_options = {s.station_id: s.name for s in dataset.stations}
 station_ids = list(station_options)
-default_route = dataset.routes[0]
+earliest_leg = min(dataset.legs, key=lambda leg: leg.scheduled_departure)
+default_origin_id = earliest_leg.origin_station_id
+default_destination_id = next(
+    (sid for sid in station_ids if sid != default_origin_id), default_origin_id
+)
 
 col1, col2, col3 = st.columns(3)
 origin_id = col1.selectbox(
     "Origin", options=station_ids, format_func=lambda sid: station_options[sid],
-    index=station_ids.index(default_route.origin_station_id),
+    index=station_ids.index(default_origin_id),
 )
 destination_id = col2.selectbox(
     "Destination", options=station_ids, format_func=lambda sid: station_options[sid],
-    index=station_ids.index(default_route.destination_station_id),
+    index=station_ids.index(default_destination_id),
 )
-departure_time = col3.time_input(
-    "Departure at or after", value=default_route.scheduled_departure.time()
+departure_time_of_day = col3.time_input(
+    "Departure at or after", value=earliest_leg.scheduled_departure.time()
+)
+departure_datetime = datetime.combine(
+    earliest_leg.scheduled_departure.date(), departure_time_of_day
 )
 
-candidate_routes = [
-    r
-    for r in dataset.routes
-    if r.origin_station_id == origin_id
-    and r.destination_station_id == destination_id
-    and r.scheduled_departure.time() >= departure_time
-]
+candidate_routes, results_by_route = search_and_simulate(
+    data_source_path, origin_id, destination_id, departure_datetime, N_ITERATIONS, RNG_SEED
+)
 
 if not candidate_routes:
     st.info(
-        "No candidate routes match that search in the mock timetable "
-        "(v1 mock data only contains a handful of fixed legs). Showing all available routes instead."
+        "No direct or single-transfer routes match that search (v1 route search doesn't "
+        "chain multiple transfers). Try an earlier departure time or a different pair of stations."
     )
-    candidate_routes = dataset.routes
+    st.stop()
 
 # --- §4.2 Route comparison view ----------------------------------------------
 st.subheader("Candidate routes")

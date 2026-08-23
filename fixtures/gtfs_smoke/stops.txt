@@ -1,0 +1,6 @@
+stop_id,stop_name,parent_station,location_type
+176697,Frankfurt (Main) Hauptbahnhof,,1
+176697_PLAT_7,Frankfurt (Main) Hauptbahnhof Gleis 7,176697,0
+517455,Köln Hbf,,1
+517455_PLAT_3,Köln Hbf Gleis 3,517455,0
+9941,München Hbf,,1

@@ -1,0 +1,4 @@
+agency_id,agency_name,agency_url,agency_timezone
+1,DB Fernverkehr AG,https://www.bahn.de,Europe/Berlin
+2,ÖBB,https://www.oebb.at,Europe/Vienna
+3,DB Regio AG Bayern,https://www.bahn.de,Europe/Berlin

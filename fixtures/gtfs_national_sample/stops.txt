@@ -1,0 +1,9 @@
+stop_id,stop_name,parent_station,location_type
+CORR_A,Corridor Station A,,1
+CORR_A_PLAT,Corridor Station A Platform,CORR_A,0
+CORR_B,Corridor Station B,,1
+CORR_B_PLAT,Corridor Station B Platform,CORR_B,0
+OTHER_C,Non-Corridor Station C,,1
+OTHER_C_PLAT,Non-Corridor Station C Platform,OTHER_C,0
+OTHER_D,Non-Corridor Station D,,1
+OTHER_D_PLAT,Non-Corridor Station D Platform,OTHER_D,0
