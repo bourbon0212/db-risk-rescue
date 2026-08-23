@@ -4,13 +4,15 @@ historical-delay DataFrame, and checks the assembled MockDataset end to end.
 """
 
 import json
+from datetime import datetime
 
 import pytest
 
-from models import MockDataset
+from models import Leg, MockDataset
 from pipelines.build_dataset import (
     DEMO_GTFS_DIR,
     DEMO_SERVICE_DATE,
+    _dedupe_legs,
     _find_latest_delay_parquet,
     build_dataset,
     demo_historical_delays,
@@ -110,3 +112,37 @@ def test_find_latest_delay_parquet_picks_the_most_recent_month(tmp_path):
 
 def test_find_latest_delay_parquet_returns_none_when_absent(tmp_path):
     assert _find_latest_delay_parquet(tmp_path) is None
+
+
+# --- _dedupe_legs ------------------------------------------------------------
+
+
+def _leg(leg_id, line_id="L1", origin="A", dest="B", dep="09:00", arr="10:00"):
+    return Leg(
+        leg_id=leg_id,
+        line_id=line_id,
+        origin_station_id=origin,
+        destination_station_id=dest,
+        scheduled_departure=datetime.fromisoformat(f"2026-08-24T{dep}"),
+        scheduled_arrival=datetime.fromisoformat(f"2026-08-24T{arr}"),
+        delay_distribution_minutes={"0": 1.0},
+    )
+
+
+def test_dedupe_legs_drops_exact_duplicates_from_different_trip_ids():
+    """Same line/stations/times but different leg_id (i.e. different raw
+    trip_id) -- the real GTFS.DE duplicate-trip-record quirk."""
+    legs = [_leg("1023960::10"), _leg("590484::7")]
+    deduped = _dedupe_legs(legs)
+    assert len(deduped) == 1
+    assert deduped[0].leg_id == "1023960::10"  # keeps the first occurrence
+
+
+def test_dedupe_legs_keeps_legs_that_differ_in_any_field():
+    legs = [
+        _leg("1", line_id="L1"),
+        _leg("2", line_id="L2"),  # different line
+        _leg("3", origin="C"),  # different origin
+        _leg("4", dep="11:00"),  # different departure time
+    ]
+    assert len(_dedupe_legs(legs)) == 4

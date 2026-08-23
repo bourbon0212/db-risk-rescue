@@ -28,13 +28,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from data_loader import MOCK_DATA_PATH, load_dataset
 from models import Leg, Line, MockDataset, Station, Transfer
 from pipelines.delay_aggregation import DEFAULT_MIN_SAMPLES, build_delay_distributions
 from pipelines.delay_mapping import load_piebro_delays
 from pipelines.gtfs_ingest import LINE_TYPES, derive_transfers, parse_legs, parse_lines, parse_stations
 from pipelines.gtfs_scope import scope_gtfs_feed
-from pipelines.id_crosswalk import GTFS_STOP_ID_TO_STATION_ID, to_station_id
+from pipelines.id_crosswalk import GTFS_STOP_ID_TO_STATION_ID, STATION_NAMES, to_station_id
 
 DEMO_GTFS_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_smoke"
 DEMO_SERVICE_DATE = date(2026, 8, 23)
@@ -111,6 +110,31 @@ def _apply_crosswalk(
 ) -> tuple[list[Station], list[Leg], list[Transfer]]:
     """Translate every raw GTFS stop_id-derived station_id to our station_id."""
     return _crosswalk_stations(stations), _crosswalk_legs(legs), _crosswalk_transfers(transfers)
+
+
+def _dedupe_legs(legs: list[Leg]) -> list[Leg]:
+    """Drop legs that are exact duplicates of an earlier one (same line,
+    stations, and times). GTFS.DE's feed occasionally carries two different
+    trip_ids for the exact same physical service -- a real feed-quality
+    quirk, not something this build causes. This must run before
+    derive_transfers(), not after: deduping afterward would leave one
+    twin's leg gone while transfers still reference its leg_id.
+    """
+    seen_keys: set[tuple] = set()
+    deduped: list[Leg] = []
+    for leg in legs:
+        key = (
+            leg.line_id,
+            leg.origin_station_id,
+            leg.destination_station_id,
+            leg.scheduled_departure,
+            leg.scheduled_arrival,
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(leg)
+    return deduped
 
 
 def build_dataset(
@@ -241,13 +265,15 @@ def build_real_dataset(
         if leg.origin_station_id in corridor_stop_ids
         and leg.destination_station_id in corridor_stop_ids
     ]
+
+    corridor_legs = _dedupe_legs(corridor_legs)
     transfers = derive_transfers(corridor_legs)
     legs, transfers = _crosswalk_legs(corridor_legs), _crosswalk_transfers(transfers)
 
     used_line_ids = {leg.line_id for leg in legs}
     lines = [line for line in lines if line.line_id in used_line_ids]
 
-    stations = load_dataset(MOCK_DATA_PATH).stations
+    stations = [Station(station_id=sid, name=name) for sid, name in STATION_NAMES.items()]
 
     delay_parquet_path = _find_latest_delay_parquet(raw_dir)
     if delay_parquet_path is not None:
