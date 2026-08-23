@@ -1,0 +1,8 @@
+venv/
+db_env/
+.claudeignore
+__pycache__/
+.pytest_cache/
+.env
+.agents/
+.claude/skills/

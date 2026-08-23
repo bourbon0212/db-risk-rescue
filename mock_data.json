@@ -1,0 +1,89 @@
+{
+  "stations": [
+    { "station_id": "DE_FRA_HBF", "name": "Frankfurt(Main)Hbf" },
+    { "station_id": "DE_KOL_HBF", "name": "Köln Hbf" },
+    { "station_id": "DE_STG_HBF", "name": "Stuttgart Hbf" },
+    { "station_id": "DE_MAN_HBF", "name": "Mannheim Hbf" },
+    { "station_id": "DE_HEI_HBF", "name": "Heidelberg Hbf" }
+  ],
+  "lines": [
+    { "line_id": "ICE_15", "type": "ICE", "operator": "DB Fernverkehr" },
+    { "line_id": "ICE_22", "type": "ICE", "operator": "DB Fernverkehr" },
+    { "line_id": "RE_1", "type": "RE", "operator": "DB Regio" }
+  ],
+  "legs": [
+    {
+      "leg_id": "L1",
+      "line_id": "ICE_15",
+      "origin_station_id": "DE_FRA_HBF",
+      "destination_station_id": "DE_KOL_HBF",
+      "scheduled_departure": "2026-08-23T09:02:00",
+      "scheduled_arrival": "2026-08-23T10:14:00",
+      "delay_distribution_minutes": {
+        "0": 0.60,
+        "5": 0.20,
+        "15": 0.12,
+        "30": 0.06,
+        "60": 0.02
+      }
+    },
+    {
+      "leg_id": "L2",
+      "line_id": "ICE_22",
+      "origin_station_id": "DE_STG_HBF",
+      "destination_station_id": "DE_MAN_HBF",
+      "scheduled_departure": "2026-08-23T09:10:00",
+      "scheduled_arrival": "2026-08-23T09:58:00",
+      "delay_distribution_minutes": {
+        "0": 0.15,
+        "5": 0.20,
+        "15": 0.30,
+        "30": 0.20,
+        "60": 0.15
+      }
+    },
+    {
+      "leg_id": "L3",
+      "line_id": "RE_1",
+      "origin_station_id": "DE_MAN_HBF",
+      "destination_station_id": "DE_HEI_HBF",
+      "scheduled_departure": "2026-08-23T10:06:00",
+      "scheduled_arrival": "2026-08-23T10:26:00",
+      "delay_distribution_minutes": {
+        "0": 0.70,
+        "5": 0.15,
+        "15": 0.10,
+        "30": 0.05
+      }
+    }
+  ],
+  "transfers": [
+    {
+      "transfer_id": "T1",
+      "station_id": "DE_MAN_HBF",
+      "from_leg_id": "L2",
+      "to_leg_id": "L3",
+      "scheduled_buffer_minutes": 8
+    }
+  ],
+  "routes": [
+    {
+      "route_id": "R1",
+      "legs": ["L1"],
+      "transfers": [],
+      "origin_station_id": "DE_FRA_HBF",
+      "destination_station_id": "DE_KOL_HBF",
+      "scheduled_departure": "2026-08-23T09:02:00",
+      "scheduled_arrival": "2026-08-23T10:14:00"
+    },
+    {
+      "route_id": "R2",
+      "legs": ["L2", "L3"],
+      "transfers": ["T1"],
+      "origin_station_id": "DE_STG_HBF",
+      "destination_station_id": "DE_HEI_HBF",
+      "scheduled_departure": "2026-08-23T09:10:00",
+      "scheduled_arrival": "2026-08-23T10:26:00"
+    }
+  ]
+}
