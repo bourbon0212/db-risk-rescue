@@ -6,7 +6,7 @@ import streamlit as st
 
 from data_loader import load_dataset
 from engine import RouteSimulationResult, index_dataset, simulate_route
-from ui_components import render_route_card, render_route_timeline
+from ui_components import render_header_banner, render_route_card, render_route_timeline
 
 N_ITERATIONS = 1000
 RNG_SEED = 42  # fixed seed keeps ETAs stable across Streamlit reruns
@@ -37,11 +37,7 @@ legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
 stations_by_id = {s.station_id: s for s in dataset.stations}
 results_by_route = simulate_all_routes(N_ITERATIONS, RNG_SEED)
 
-st.title("🚆 DB Risk & Rescue")
-st.caption(
-    "Probability-aware trip planning — a True Expected Time of Arrival, "
-    f"computed via {N_ITERATIONS:,}-iteration Monte Carlo simulation over historical delay behavior."
-)
+render_header_banner(N_ITERATIONS)
 
 # --- §4.1 Input flow ---------------------------------------------------------
 st.subheader("Plan your trip")
