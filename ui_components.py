@@ -6,7 +6,7 @@ single HTML blobs (native <details>/<summary> for the itinerary, so expanding
 it never triggers a Streamlit rerun).
 """
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 import streamlit as st
 
@@ -22,7 +22,6 @@ FAINT = "#9aa1ab"
 LINE = "#e3e5e9"
 CARD_BG = "#ffffff"
 
-RISK_RANK = {"low": 0, "medium": 1, "high": 2}
 RISK_TOKENS = {
     "low": {"bg": "#eaf7ee", "border": "#2e7d32", "text": "#1c6b2c"},
     "medium": {"bg": "#fff5e3", "border": "#d98c1f", "text": "#8a5300"},
@@ -30,6 +29,17 @@ RISK_TOKENS = {
 }
 # Action-first wording per design_mock.html §2 notes — one phrase, one number, one buffer.
 RISK_WORDING = {"low": "Safe connection", "medium": "Tight connection", "high": "Miss likely"}
+# UIUX_SPEC.md §1.3 — distinct phrase for a base-Red transfer downgraded by the
+# Impact Override (SPEC.md §5.3), so a high probability is never relabeled
+# with the genuine-Medium phrase.
+RISK_WORDING_OVERRIDE = "Recoverable miss"
+# SPEC.md §5.3 — a base-Red transfer downgrades to Yellow when its precomputed
+# fallback impact is at or under this many minutes.
+IMPACT_OVERRIDE_THRESHOLD_MINUTES = 15
+# SPEC.md §5.2 — card left-edge strip (Global Health), thresholded on the P85
+# penalty alone, independent of transfer count or per-transfer probabilities.
+GLOBAL_HEALTH_YELLOW_MAX_MINUTES = 30
+GLOBAL_HEALTH_RED_MIN_MINUTES = 60
 
 # Line-type → DB category chip, per spec item 3 (ICE/IC = dark grey, RE/RB = light
 # grey with border, S-Bahn = DB green).
@@ -46,9 +56,39 @@ DEFAULT_CHIP_CLASS = "chip-ice"
 
 
 def classify_risk(miss_probability: float) -> str:
+    """SPEC.md §5.3 — base probability band, before the Impact Override."""
     if miss_probability < 0.10:
         return "low"
     if miss_probability <= 0.30:
+        return "medium"
+    return "high"
+
+
+def classify_local_risk(miss_probability: float, impact_minutes: float) -> tuple[str, bool]:
+    """SPEC.md §5.3 — Local Risk: the base probability band (classify_risk)
+    with the Impact Override applied. Returns (displayed_band, is_override):
+    displayed_band is one of "low"/"medium"/"high" for coloring, and
+    is_override is True only when a base-High transfer was downgraded to
+    Medium because its precomputed fallback impact is small — callers use
+    that flag to pick the "Recoverable miss" wording instead of "Tight
+    connection" (UIUX_SPEC.md §1.3), since the two Yellow cases mean
+    different things even though they share a color.
+    """
+    base = classify_risk(miss_probability)
+    if base == "high" and impact_minutes <= IMPACT_OVERRIDE_THRESHOLD_MINUTES:
+        return "medium", True
+    return base, False
+
+
+def classify_global_health(p85_penalty_minutes: float) -> str:
+    """SPEC.md §5.2 — Global Health: the card left-edge strip, driven solely
+    by the P85 penalty (P85 True ETA - Scheduled Arrival), independent of
+    transfer count or any individual transfer's miss probability. Applies
+    uniformly, including to direct (0-transfer) routes (UIUX_SPEC.md §2.3).
+    """
+    if p85_penalty_minutes <= GLOBAL_HEALTH_YELLOW_MAX_MINUTES:
+        return "low"
+    if p85_penalty_minutes <= GLOBAL_HEALTH_RED_MIN_MINUTES:
         return "medium"
     return "high"
 
@@ -62,6 +102,23 @@ def format_duration(start: datetime, end: datetime) -> str:
 def _delay_label(scheduled: datetime, projected: datetime) -> str:
     minutes = round((projected - scheduled).total_seconds() / 60)
     return "on time" if minutes <= 0 else f"+{minutes}m"
+
+
+def _fallback_arrival_label(route_scheduled_arrival: datetime, impact_minutes: float) -> str:
+    """UIUX_SPEC.md §1.3 (history #18-#19) — shows the fallback's own
+    absolute arrival clock time rather than a relative delta, for any
+    base-Red transfer (Miss likely and a downgraded Recoverable miss alike —
+    SPEC.md §5.3's Impact Override changes the color band, not which figure
+    is relevant). A number like "+12 min" or "on time" still begs the
+    question "relative to what" (the route's own Scheduled Arrival, per
+    SPEC.md §3.4/§5.3 -- not the Monte Carlo Expected or Safest figures
+    shown elsewhere on the card); a concrete clock time sidesteps that
+    ambiguity entirely, since it's self-evidently comparable to the
+    Scheduled Arrival time already printed in the card header without the
+    reader needing to know what the number is measured against.
+    """
+    fallback_arrival = route_scheduled_arrival + timedelta(minutes=impact_minutes)
+    return f"arrives {fallback_arrival:%H:%M} if missed"
 
 
 def _chip_class(leg: Leg, lines_by_id: dict[str, Line]) -> str:
@@ -385,14 +442,29 @@ def _itinerary_html(
             transfer_id = route.transfers[i]
             transfer = transfers_by_id[transfer_id]
             risk = risk_by_transfer_id[transfer_id]
-            risk_level = classify_risk(risk.miss_probability)
+            risk_level, is_override = classify_local_risk(risk.miss_probability, risk.impact_minutes)
+            phrase = RISK_WORDING_OVERRIDE if is_override else RISK_WORDING[risk_level]
+            # UIUX_SPEC.md §1.3 — any base-Red transfer (Miss likely *or* a
+            # downgraded Recoverable miss) shows the fallback arrival instead
+            # of the scheduled buffer: a base-Red transfer's own buffer is by
+            # definition tight, so it'd just restate "this is risky" rather
+            # than answer the question that actually matters once a miss is
+            # the likely outcome -- what happens if it's missed. Buffer stays
+            # for Safe/Tight, where the connection is expected to hold and
+            # "how much slack" is the relevant framing.
+            is_base_high = classify_risk(risk.miss_probability) == "high"
+            minutes_label = (
+                _fallback_arrival_label(route.scheduled_arrival, risk.impact_minutes)
+                if is_base_high
+                else f"{transfer.scheduled_buffer_minutes} min"
+            )
             rows.append(
                 '<div style="display:contents;">'
                 '<div class="tt-time"></div>'
                 '<div class="tt-dot-col"><div class="tt-connector dashed"></div></div>'
                 f'<div class="transfer-bar risk-{risk_level}">'
-                f'<span class="t-headline">{RISK_WORDING[risk_level]} ({risk.miss_probability:.0%} risk)</span>'
-                f'<span class="t-buffer">·  {transfer.scheduled_buffer_minutes} min</span>'
+                f'<span class="t-headline">{phrase} ({risk.miss_probability:.0%} risk)</span>'
+                f'<span class="t-buffer">·  {minutes_label}</span>'
                 "</div></div>"
             )
 
@@ -427,12 +499,10 @@ def render_route_card(
     else:
         transfer_meta = f"{n_transfers} transfer" + ("" if n_transfers == 1 else "s")
 
-    worst_level = None
-    for risk in result.transfer_risks:
-        level = classify_risk(risk.miss_probability)
-        if worst_level is None or RISK_RANK[level] > RISK_RANK[worst_level]:
-            worst_level = level
-    strip_class = f" strip-{worst_level}" if worst_level else ""
+    # SPEC.md §5.2 — Global Health: driven solely by the P85 penalty, applies
+    # uniformly including to direct (0-transfer) routes.
+    health_level = classify_global_health(result.p85_penalty_minutes)
+    strip_class = f" strip-{health_level}"
 
     expected_delay = _delay_label(route.scheduled_arrival, result.mean_eta)
     safest_delay = _delay_label(route.scheduled_arrival, result.p85_eta)

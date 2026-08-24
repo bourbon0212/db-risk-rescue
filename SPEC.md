@@ -159,6 +159,8 @@ This route search is **not** re-run per Monte Carlo iteration — it is prohibit
 
 Scope boundary: this is one level of re-routing. If a transfer *within* a fallback route is itself missed, that nested miss resolves via the same-line-headway wait (§3.2 Step 4), not a second re-routing search — unbounded recursive re-pathfinding remains deferred (§7).
 
+**Impact-Weighted UI Override input.** The same precomputed `FallbackPlan` also feeds the UI's Local Risk Impact Override (§5.3): for a given transfer node, `impact_minutes = fallback_plan.route.scheduled_arrival - route.scheduled_arrival` when `precompute_fallback_plans` found a plan; when it returned `None` (no candidate route survived the remaining-transfer-budget filter), the override falls back to the same-line-headway wait computed in §3.2 Step 4 instead. Because the fallback plan is already cached before the simulation loop starts, reading it for the UI costs the same O(1) lookup the simulation itself performs on a miss — the override adds no new computation, only a new consumer of an existing cache.
+
 ### 3.5 Backend-Agnostic Fallback Search & the O(1) Guarantee
 
 `precompute_fallback_plans` (§3.4) doesn't know or care which storage backend (§4) answers its route search — it takes an optional `route_search_fn(origin_id, destination_id, departure_time) -> list[Route]` callback; omitting it falls back to the default in-memory search over a loaded `MockDataset`. This is what let the DuckDB backend (§4.3) plug in without changing `precompute_fallback_plans`'s control flow, or `simulate_route`'s hot loop, at all:
@@ -226,9 +228,33 @@ A **ranked card list** of candidate routes (typically 3–5), each card showing:
 
 Cards are sortable/orderable so the user can compare "fastest scheduled" against "safest / lowest-risk" at a glance — similar to a flight-search results list.
 
+**Global Health (card left-edge strip).** Each card additionally carries a 4px left-edge color strip (`UIUX_SPEC.md` §2.3) signaling overall route safety, driven **solely by the P85 penalty** — `p85_penalty_minutes = P85 True ETA (§3.3) − Scheduled Arrival` — and deliberately ignoring individual transfer miss probabilities:
+
+| Band | P85 penalty | Rationale |
+|---|---|---|
+| Green (Safe) | ≤ 30 min | Within normal single-leg delay variance; a route can land here even with every transfer Green, purely from ordinary delay-bucket noise |
+| Yellow (Risky) | 30–60 min | About one recoverable missed connection / one Service Frequency headway cycle (§2.6) |
+| Red (Danger) | > 60 min | Compounding misses, or a fallback that itself costs real time |
+
+This is a distinct signal from the Local Risk classification (§5.3): Global Health answers "how much slack does this route have overall," while Local Risk answers "which specific transfer should I watch." A route with an all-Green transfer timeline can still show a Yellow card edge — that's expected, not a bug: ordinary per-leg delay variance alone routinely pushes P85 into the 20–30 minute range, so the 30/60 split is calibrated against that baseline rather than against a "no risk should ever look risky" assumption. Global Health also applies uniformly regardless of transfer count — a direct (0-transfer) route is colored by its own P85 penalty like any other route, not exempted (see `UIUX_SPEC.md` §2.3 for the resulting change from the pre-Impact-Weighted-Thresholds behavior).
+
 ### 5.3 Route Detail View
 
-Selecting a card opens a **horizontal timeline**: leg → transfer → leg → transfer → ..., left to right. Each transfer node is color-coded by its `P(miss)` from §3.1 (green < 10%, yellow 10–30%, red > 30%). This gives an at-a-glance risk story for that specific journey, complementing the aggregate card-level stats from §5.2.
+Selecting a card opens a **horizontal timeline**: leg → transfer → leg → transfer → ..., left to right. Each transfer node is color-coded by a two-layer **Local Risk** classification — a base probability band with an impact-aware override, rather than probability alone:
+
+1. **Base Probability Band** — `P(miss)` from §3.1: Green < 10%, Yellow 10–30%, Red > 30%.
+2. **Impact Override** — if the base band is Red, but the transfer's precomputed impact (`impact_minutes`, §3.4) is **≤ 15 min**, the displayed band downgrades to Yellow. The underlying miss probability shown in the label is unchanged — only the color/phrase (`UIUX_SPEC.md` §1.3) softens, reflecting that a fast, already-known alternative exists rather than a real disruption.
+
+| Impact (`impact_minutes`) | Displayed band when base is Red |
+|---|---|
+| ≤ 15 min | Yellow (override) |
+| > 15 min | Red (unchanged) |
+
+This exists to separate genuinely fatal transfers (a long, costly wait) from statistically-red-but-practically-harmless ones (a fast reroute, or a fallback that even arrives early, already covers the miss) — without it, the transfer strip flags every >30%-miss connection identically regardless of how bad actually missing it would be.
+
+This gives an at-a-glance risk story for that specific journey, complementing the Global Health signal from §5.2.
+
+**Implementation status:** both rules are wired in — `engine.py` exposes `impact_minutes` (`TransferRisk`) and `p85_penalty_minutes` (`RouteSimulationResult`) alongside the existing simulation outputs, and `ui_components.py` consumes them for the transfer-strip and card-edge coloring. One refinement beyond the rules as originally specified here: any base-Red transfer — not just one downgraded by the Impact Override — renders its trailing figure as the fallback's absolute arrival clock time rather than the scheduled buffer, since a base-Red transfer's buffer is uninformative regardless of whether the override fires (`UIUX_SPEC.md` §1.3, §5 history #16–#19).
 
 ## 6. Milestones Retrospective
 

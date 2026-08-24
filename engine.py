@@ -152,6 +152,31 @@ def transfer_miss_probability(upstream_leg: Leg, transfer: Transfer) -> float:
     )
 
 
+def transfer_impact_minutes(
+    transfer: Transfer,
+    downstream_leg: Leg,
+    route: Route,
+    lines_by_id: dict[str, Line],
+    fallback_plans: dict[str, FallbackPlan | None] | None,
+) -> float:
+    """SPEC.md §3.4 / §5.3 — schedule-level cost of missing this transfer, for
+    the UI's Local Risk Impact Override. Reads the same precomputed
+    FallbackPlan the simulation loop uses on a miss (O(1), no extra search):
+    when one exists, the impact is how much later (or earlier, if the
+    fallback beats the original schedule) the fallback route's own scheduled
+    arrival lands versus the route's; when none survived the
+    remaining-transfer-budget filter, the impact is the downstream line's
+    headway (SPEC.md §2.6) -- the schedule-level equivalent of the same-line
+    wait computed per-iteration in §3.2 Step 4.
+    """
+    fallback = fallback_plans.get(transfer.transfer_id) if fallback_plans else None
+    if fallback is not None:
+        delta = fallback.route.scheduled_arrival - route.scheduled_arrival
+        return delta.total_seconds() / 60.0
+    line_type = lines_by_id[downstream_leg.line_id].type
+    return float(get_headway_minutes(line_type))
+
+
 def _next_periodic_departure(
     leg_scheduled_departure: datetime,
     realized_arrival_time: datetime,
@@ -183,6 +208,7 @@ class TransferRisk:
     transfer_id: str
     miss_probability: float
     simulated_miss_rate: float
+    impact_minutes: float
 
 
 @dataclass
@@ -193,6 +219,7 @@ class RouteSimulationResult:
     p85_eta: datetime
     p90_eta: datetime
     transfer_risks: list[TransferRisk]
+    p85_penalty_minutes: float
     simulated_arrivals: list[datetime] = field(repr=False)
 
 
@@ -291,12 +318,16 @@ def simulate_route(
         simulated_arrivals.append(realized_arrival)
 
     simulated_arrivals.sort()
+    p85_eta = _percentile(simulated_arrivals, 85)
 
     transfer_risks = [
         TransferRisk(
             transfer_id=transfer.transfer_id,
             miss_probability=transfer_miss_probability(ordered_legs[i], transfer),
             simulated_miss_rate=miss_counts[i] / n_iterations,
+            impact_minutes=transfer_impact_minutes(
+                transfer, ordered_legs[i + 1], route, lines_by_id, fallback_plans
+            ),
         )
         for i, transfer in enumerate(ordered_transfers)
     ]
@@ -305,8 +336,9 @@ def simulate_route(
         route_id=route.route_id,
         n_iterations=n_iterations,
         mean_eta=_mean_datetime(simulated_arrivals),
-        p85_eta=_percentile(simulated_arrivals, 85),
+        p85_eta=p85_eta,
         p90_eta=_percentile(simulated_arrivals, 90),
         transfer_risks=transfer_risks,
+        p85_penalty_minutes=(p85_eta - route.scheduled_arrival).total_seconds() / 60.0,
         simulated_arrivals=simulated_arrivals,
     )

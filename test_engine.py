@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from engine import (
+    SERVICE_FREQUENCY_MINUTES,
     RouteSimulationResult,
     _next_periodic_departure,
     index_dataset,
     precompute_fallback_plans,
     simulate_route,
+    transfer_impact_minutes,
     transfer_miss_probability,
 )
 from models import Leg, Line, MockDataset, Route, Station, Transfer
@@ -415,3 +417,87 @@ def test_precompute_fallback_plans_respects_reduced_transfer_budget(reduced_budg
     # the only direct candidate is the just-missed leg itself, so no
     # fallback survives.
     assert plans["T_BC_CD"] is None
+
+
+# ---------------------------------------------------------------------------
+# SPEC.md §3.4 / §5.3 — transfer_impact_minutes (Impact-Weighted UI Thresholds)
+# ---------------------------------------------------------------------------
+
+
+def test_transfer_impact_minutes_uses_fallback_plan_when_available(dynamic_fallback_dataset):
+    dataset = dynamic_fallback_dataset
+    legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
+    route = dataset.routes[0]
+    plans = precompute_fallback_plans(route, dataset, legs_by_id, transfers_by_id)
+
+    transfer = transfers_by_id["T_MISS"]
+    downstream_leg = legs_by_id["BC_ORIG"]
+    impact = transfer_impact_minutes(transfer, downstream_leg, route, lines_by_id, plans)
+
+    # Fallback (BC_ALT) arrives 10:00; the route's own scheduled arrival is
+    # 10:15 -- the fallback beats the original schedule by 15 minutes, so the
+    # impact is negative (the "some fallback plans even arrive earlier" case
+    # from the threshold analysis).
+    assert impact == pytest.approx(-15.0)
+
+
+def test_transfer_impact_minutes_falls_back_to_headway_when_no_plan(dataset):
+    """R2/T1 in mock_data.json has no surviving fallback candidate (see
+    test_mock_data_transfer_with_no_alternative_route_falls_back_to_none) --
+    the impact must fall back to L3's line-type headway (RE -> 60min)."""
+    legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
+    route = next(r for r in dataset.routes if r.route_id == "R2")
+    plans = precompute_fallback_plans(route, dataset, legs_by_id, transfers_by_id)
+    assert plans["T1"] is None
+
+    transfer = transfers_by_id["T1"]
+    downstream_leg = legs_by_id["L3"]
+    impact = transfer_impact_minutes(transfer, downstream_leg, route, lines_by_id, plans)
+
+    assert impact == pytest.approx(60.0)
+
+
+def test_transfer_impact_minutes_without_fallback_plans_arg_uses_headway(dataset):
+    """Passing fallback_plans=None outright (not just an all-None dict) must
+    behave identically -- no crash on a missing .get()."""
+    legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
+    route = next(r for r in dataset.routes if r.route_id == "R2")
+    transfer = transfers_by_id["T1"]
+    downstream_leg = legs_by_id["L3"]
+
+    impact = transfer_impact_minutes(transfer, downstream_leg, route, lines_by_id, None)
+
+    assert impact == pytest.approx(float(SERVICE_FREQUENCY_MINUTES["RE"]))
+
+
+# ---------------------------------------------------------------------------
+# SPEC.md §5.2 / §5.3 — RouteSimulationResult.p85_penalty_minutes and
+# TransferRisk.impact_minutes, as exposed by simulate_route
+# ---------------------------------------------------------------------------
+
+
+def test_simulate_route_exposes_p85_penalty_minutes(dataset, routes_by_id):
+    legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
+    route = routes_by_id["R1"]
+
+    result = simulate_route(
+        route, legs_by_id, transfers_by_id, lines_by_id,
+        n_iterations=500, rng=random.Random(3),
+    )
+
+    expected = (result.p85_eta - route.scheduled_arrival).total_seconds() / 60.0
+    assert result.p85_penalty_minutes == pytest.approx(expected)
+
+
+def test_simulate_route_transfer_risk_exposes_impact_minutes(dynamic_fallback_dataset):
+    dataset = dynamic_fallback_dataset
+    legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
+    route = dataset.routes[0]
+    plans = precompute_fallback_plans(route, dataset, legs_by_id, transfers_by_id)
+
+    result = simulate_route(
+        route, legs_by_id, transfers_by_id, lines_by_id,
+        n_iterations=5, rng=random.Random(1), fallback_plans=plans,
+    )
+
+    assert result.transfer_risks[0].impact_minutes == pytest.approx(-15.0)
