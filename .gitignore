@@ -5,6 +5,14 @@ __pycache__/
 .env
 .agents/
 .claude/skills/
+# Locally these are also covered by .git/info/exclude, which isn't shared --
+# committing the rule here protects every clone, not just this machine.
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+# Streamlit's standard secrets file -- doesn't exist yet, but must never be
+# committed the first time it's created. .streamlit/config.toml (theme, no
+# secrets) stays tracked.
+.streamlit/secrets.toml
 
 # Phase 2 raw data downloads (pipelines/download_raw_data.py) -- large,
 # regenerable, not meant to live in git. data/real_dataset.json (the
