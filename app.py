@@ -13,12 +13,21 @@ from engine import RouteSimulationResult, index_dataset, precompute_fallback_pla
 from models import Leg, Line, MockDataset, Route, Station, Transfer
 from pipelines import route_search_duckdb
 from pipelines.route_search import find_candidate_routes
-from ui_components import render_header_banner, render_route_card, render_route_timeline
+from ui_components import (
+    inject_global_styles,
+    render_header_banner,
+    render_route_card,
+    render_search_card,
+)
 
 N_ITERATIONS = 1000
 RNG_SEED = 42  # fixed seed keeps ETAs stable across Streamlit reruns
 
-st.set_page_config(page_title="DB Risk & Rescue", page_icon="🚆", layout="wide")
+SORT_FASTEST = "Fastest scheduled"
+SORT_SAFEST = "Safest arrival"
+
+st.set_page_config(page_title="DB Risk & Rescue", page_icon=":material/train:", layout="wide")
+inject_global_styles()
 
 # DATA_SPEC.md §6, §7 / SPEC.md §4, §5.1 — sidebar toggle for A/B comparing
 # the Phase 1 mock timetable, the Phase 2 GTFS/JSON pipeline output, and the
@@ -97,7 +106,9 @@ def search_and_simulate_warehouse(
     service_date: date,
     n_iterations: int,
     seed: int,
-) -> tuple[list[Route], dict[str, RouteSimulationResult], dict[str, Leg], dict[str, Transfer]]:
+) -> tuple[
+    list[Route], dict[str, RouteSimulationResult], dict[str, Leg], dict[str, Transfer], dict[str, Line]
+]:
     """SPEC.md §4.3 — Phase 3 counterpart to search_and_simulate(), sourced
     from the DuckDB warehouse and scoped to service_date. legs_by_id/
     transfers_by_id start empty and are grown in place by every
@@ -135,14 +146,12 @@ def search_and_simulate_warehouse(
         )
         for route in candidate_routes
     }
-    return candidate_routes, results, legs_by_id, transfers_by_id
+    return candidate_routes, results, legs_by_id, transfers_by_id, lines_by_id
 
 
 render_header_banner(N_ITERATIONS)
 
 # --- §4.1 Input flow ---------------------------------------------------------
-st.subheader("Plan your trip")
-
 if use_warehouse:
     conn = get_warehouse_connection()
     stations_by_id = {
@@ -161,22 +170,16 @@ if use_warehouse:
     default_origin_id = station_ids[0]
     default_destination_id = station_ids[1] if len(station_ids) > 1 else station_ids[0]
 
-    col1, col2, col3, col4 = st.columns(4)
-    origin_id = col1.selectbox(
-        "Origin", options=station_ids, format_func=lambda sid: stations_by_id[sid].name,
-        index=station_ids.index(default_origin_id),
+    origin_id, destination_id, service_date, departure_time_of_day, sort_choice = render_search_card(
+        station_ids, stations_by_id, default_origin_id, default_destination_id,
+        default_departure_time=datetime.min.time(),
+        sort_options=(SORT_FASTEST, SORT_SAFEST),
+        calendar_range=(calendar_min, calendar_max),
+        default_date=calendar_min,
     )
-    destination_id = col2.selectbox(
-        "Destination", options=station_ids, format_func=lambda sid: stations_by_id[sid].name,
-        index=station_ids.index(default_destination_id),
-    )
-    service_date = col3.date_input(
-        "Date", value=calendar_min, min_value=calendar_min, max_value=calendar_max,
-    )
-    departure_time_of_day = col4.time_input("Departure at or after", value=datetime.min.time())
     departure_datetime = datetime.combine(service_date, departure_time_of_day)
 
-    candidate_routes, results_by_route, legs_by_id, transfers_by_id = search_and_simulate_warehouse(
+    candidate_routes, results_by_route, legs_by_id, transfers_by_id, lines_by_id = search_and_simulate_warehouse(
         conn, origin_id, destination_id, departure_datetime, service_date, N_ITERATIONS, RNG_SEED
     )
 else:
@@ -195,17 +198,10 @@ else:
         (sid for sid in station_ids if sid != default_origin_id), default_origin_id
     )
 
-    col1, col2, col3 = st.columns(3)
-    origin_id = col1.selectbox(
-        "Origin", options=station_ids, format_func=lambda sid: stations_by_id[sid].name,
-        index=station_ids.index(default_origin_id),
-    )
-    destination_id = col2.selectbox(
-        "Destination", options=station_ids, format_func=lambda sid: stations_by_id[sid].name,
-        index=station_ids.index(default_destination_id),
-    )
-    departure_time_of_day = col3.time_input(
-        "Departure at or after", value=earliest_leg.scheduled_departure.time()
+    origin_id, destination_id, _service_date, departure_time_of_day, sort_choice = render_search_card(
+        station_ids, stations_by_id, default_origin_id, default_destination_id,
+        default_departure_time=earliest_leg.scheduled_departure.time(),
+        sort_options=(SORT_FASTEST, SORT_SAFEST),
     )
     departure_datetime = datetime.combine(
         earliest_leg.scheduled_departure.date(), departure_time_of_day
@@ -223,39 +219,13 @@ if not candidate_routes:
     st.stop()
 
 # --- §4.2 Route comparison view ----------------------------------------------
-st.subheader("Candidate routes")
-
-sort_choice = st.radio(
-    "Sort by", ["Fastest scheduled", "Safest (lowest P85 risk)"], horizontal=True
-)
-if sort_choice == "Fastest scheduled":
+if sort_choice == SORT_FASTEST:
     candidate_routes = sorted(candidate_routes, key=lambda r: r.scheduled_arrival)
 else:
     candidate_routes = sorted(
         candidate_routes, key=lambda r: results_by_route[r.route_id].p85_eta
     )
 
-if (
-    "selected_route_id" not in st.session_state
-    or st.session_state.selected_route_id not in {r.route_id for r in candidate_routes}
-):
-    st.session_state.selected_route_id = candidate_routes[0].route_id
-
 for route in candidate_routes:
     result = results_by_route[route.route_id]
-    is_selected = route.route_id == st.session_state.selected_route_id
-    if render_route_card(route, result, stations_by_id, is_selected=is_selected):
-        st.session_state.selected_route_id = route.route_id
-        st.rerun()
-
-# --- §4.3 Route detail view ---------------------------------------------------
-st.subheader("Route detail")
-
-selected_route = next(
-    r for r in candidate_routes if r.route_id == st.session_state.selected_route_id
-)
-selected_result = results_by_route[selected_route.route_id]
-
-render_route_timeline(
-    selected_route, legs_by_id, transfers_by_id, stations_by_id, selected_result.transfer_risks
-)
+    render_route_card(route, result, stations_by_id, legs_by_id, transfers_by_id, lines_by_id)

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DB Risk & Rescue — UIUX Design</title>
+<style>
+  :root{
+    --ink:#161a20;
+    --muted:#68707c;
+    --faint:#9aa1ab;
+    --line:#e3e5e9;
+    --card-bg:#ffffff;
+    --page-bg:#f2f3f5;
+
+    --med-bg:#fff5e3;   --med-border:#d98c1f;  --med-text:#8a5300;
+    --high-bg:#fdeceb;  --high-border:#d63a30; --high-text:#a3231b;
+
+    --chip-ice:#33383f;
+    --chip-re-bg:#d3d6db; --chip-re-text:#20232a;
+    --chip-sbahn:#0f8a3f;
+
+    --db-red:#eb0016;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; padding:40px 24px 90px; background:var(--page-bg); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink);}
+  h1{font-size:22px; margin:0 0 4px;}
+  .subtitle{color:var(--muted); margin:0 0 40px; font-size:14px;}
+  .section{max-width:740px; margin:0 auto 52px;}
+  .section-title{font-size:15px; font-weight:700; margin:0 0 4px;}
+  .section-desc{color:var(--muted); font-size:13.5px; margin:0 0 18px; line-height:1.55;}
+  .list-caption{font-size:11.5px; color:var(--faint); margin:0 0 10px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;}
+
+  /* ============ SEARCH CARD ============ */
+  .search-card{
+    background:var(--card-bg); border:1px solid var(--line); border-radius:12px;
+    box-shadow:0 2px 6px rgba(20,20,30,.06); padding:18px 20px 20px; margin-bottom:14px;
+  }
+  .search-title{font-size:15px; font-weight:700; margin-bottom:14px;}
+  .station-row{display:grid; grid-template-columns:1fr 44px 1fr; align-items:end; gap:10px;}
+  .field{display:flex; flex-direction:column; gap:5px;}
+  .field label{font-size:11.5px; font-weight:600; color:var(--muted);}
+  .input-box{
+    background:#f4f5f7; border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+    font-size:14px; font-weight:600; color:var(--ink); display:flex; align-items:center; justify-content:space-between;
+  }
+  .input-box .chevron{width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid var(--faint);}
+  .swap-btn{
+    width:36px; height:36px; border-radius:50%; background:#fff; border:1px solid var(--line);
+    box-shadow:0 1px 2px rgba(20,20,30,.08); display:flex; align-items:center; justify-content:center;
+    font-size:15px; color:var(--muted); font-weight:700; cursor:pointer; justify-self:center;
+  }
+  .search-divider{border:none; border-top:1px solid var(--line); margin:16px 0 14px;}
+  .secondary-row{display:grid; grid-template-columns:1fr 1fr 1.4fr; gap:12px; align-items:end;}
+  .sort-group{display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; width:100%;}
+  .sort-option{flex:1; text-align:center; padding:9px 10px; font-size:12px; font-weight:600; color:var(--muted); cursor:pointer;}
+  .sort-option.active{background:var(--ink); color:#fff;}
+  .sort-option + .sort-option{border-left:1px solid var(--line);}
+
+  /* ============ CARD — same system as the last round ============ */
+  .card{
+    background:var(--card-bg); border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; box-shadow:0 1px 2px rgba(20,20,30,.04);
+    margin-bottom:14px; border-left:4px solid var(--line);
+  }
+  .card.strip-medium{border-left-color:var(--med-border);}
+  .card.strip-high{border-left-color:var(--high-border);}
+
+  .head-row{display:grid; grid-template-columns:1fr auto; align-items:start; padding:16px 16px 0; gap:12px;}
+  .sched-time{font-size:20px; font-weight:700; font-variant-numeric:tabular-nums;}
+  .sched-meta{font-size:12px; color:var(--muted); margin-top:2px;}
+
+  .predictions{border:1px solid var(--line); border-radius:8px; padding:7px 13px 8px; min-width:158px;}
+  .pred-cap{font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--faint); text-align:right; margin-bottom:5px;}
+  .pred-row{display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:2px 0;}
+  .pred-row + .pred-row{border-top:1px dashed var(--line); margin-top:5px; padding-top:6px;}
+  .pred-name{font-size:11px; font-weight:600; color:var(--muted);}
+  .pred-value{font-variant-numeric:tabular-nums;}
+  .pred-row.expected .pred-value{font-size:13px; font-weight:700; color:var(--ink);}
+  .pred-row.safest .pred-value{font-size:16px; font-weight:700; color:var(--ink);}
+  .pred-delta{font-size:10px; color:var(--faint); font-weight:600; margin-left:3px;}
+
+  .train-bar{display:flex; gap:3px; padding:12px 16px 0;}
+  .chip{display:flex; align-items:center; justify-content:center; min-height:34px; border-radius:5px; font-size:12.5px; font-weight:700; letter-spacing:.02em; padding:0 10px; min-width:78px;}
+  .chip-ice{background:var(--chip-ice); color:#fff;}
+  .chip-re{background:var(--chip-re-bg); color:var(--chip-re-text); border:1px solid #b9bdc4;}
+  .chip-sbahn{background:var(--chip-sbahn); color:#fff;}
+  .transfer-gap{width:3px; border-left:2px dashed var(--faint); margin:2px 3px; flex:0 0 auto;}
+
+  .station-row2{display:flex; justify-content:space-between; padding:9px 16px 2px; font-size:13.5px; font-weight:600;}
+  .station-row2 span:last-child{text-align:right;}
+
+  .itin-details{border-top:1px solid var(--line); margin-top:10px;}
+  .itin-details > summary{list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px; font-size:12.5px; font-weight:600; color:var(--muted); user-select:none;}
+  .itin-details > summary::-webkit-details-marker{display:none;}
+  .itin-details > summary::marker{content:"";}
+  .itin-details > summary .caret{width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid var(--faint); transition:transform .15s ease;}
+  .itin-details[open] > summary .caret{transform:rotate(180deg);}
+  .itin-details > summary .lbl-closed{display:inline;}
+  .itin-details > summary .lbl-open{display:none;}
+  .itin-details[open] > summary .lbl-closed{display:none;}
+  .itin-details[open] > summary .lbl-open{display:inline;}
+
+  .itin{padding:6px 16px 4px;}
+  .timetable{display:grid; grid-template-columns:42px 20px 1fr; row-gap:0; column-gap:9px;}
+  .tt-time{font-variant-numeric:tabular-nums; font-size:12.5px; font-weight:600; padding:9px 0 9px;}
+  .tt-dot-col{display:flex; flex-direction:column; align-items:center;}
+  .tt-dot{width:9px; height:9px; border-radius:50%; background:var(--ink); margin-top:14px; flex:0 0 auto;}
+  .tt-dot.hollow{background:#fff; border:2px solid var(--ink); width:7px; height:7px;}
+  .tt-connector{flex:1 1 auto; width:2px; background:var(--ink); margin-top:2px;}
+  .tt-connector.dashed{background:none; border-left:2px dashed var(--faint); width:0;}
+  .tt-station-wrap{padding:8px 0; display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .tt-station{font-size:13px; font-weight:600;}
+  .chip-sm{min-height:auto; padding:3px 8px; font-size:10.5px; min-width:0; border-radius:4px;}
+
+  .transfer-bar{border-radius:7px; padding:9px 12px; margin:3px 0; align-self:center; display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .transfer-bar .t-headline{font-size:12.5px; font-weight:700;}
+  .transfer-bar .t-buffer{font-size:12px; opacity:.75;}
+  .risk-medium{background:var(--med-bg); color:var(--med-text);}
+  .risk-high{background:var(--high-bg); color:var(--high-text);}
+
+  .note{max-width:740px; margin:0 auto 40px; background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 20px; font-size:13.5px; line-height:1.6;}
+  .note h3{margin:0 0 8px; font-size:14px;}
+  .note ul{margin:6px 0 0; padding-left:18px;}
+  .note li{margin-bottom:7px;}
+  .note code{background:#f1f2f4; padding:1px 5px; border-radius:4px; font-size:12.5px;}
+</style>
+</head>
+<body>
+
+<h1>Route card redesign — v7</h1>
+<p class="subtitle">DB-style "Plan your trip" search card · condensed, punchier risk wording</p>
+
+<div class="section">
+  <div class="section-title">1 · Plan your trip — search card</div>
+  <p class="section-desc">Same white-card language as the route cards below: border, subtle shadow, rounded corners. Origin and Destination sit in a grid with a circular swap button centered between their input boxes (not their labels), and a thin divider separates the primary station row from a secondary row holding Date, Departure time, and Sort — all tied to the same four inputs your backend already takes, just laid out like DB Navigator's own search panel instead of four bare Streamlit columns.</p>
+
+  <div class="search-card">
+    <div class="search-title">Plan your trip</div>
+    <div class="station-row">
+      <div class="field">
+        <label>Origin</label>
+        <div class="input-box"><span>Frankfurt(Main)Hbf</span><div class="chevron"></div></div>
+      </div>
+      <div class="swap-btn" title="Swap origin and destination">⇄</div>
+      <div class="field">
+        <label>Destination</label>
+        <div class="input-box"><span>Köln Hbf</span><div class="chevron"></div></div>
+      </div>
+    </div>
+
+    <hr class="search-divider">
+
+    <div class="secondary-row">
+      <div class="field">
+        <label>Date</label>
+        <div class="input-box"><span>2026 / 08 / 24</span></div>
+      </div>
+      <div class="field">
+        <label>Departure at or after</label>
+        <div class="input-box"><span>00:00</span></div>
+      </div>
+      <div class="field">
+        <label>Sort by</label>
+        <div class="sort-group">
+          <div class="sort-option active">Fastest scheduled</div>
+          <div class="sort-option">Safest (lowest risk)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">2 · Route cards — condensed risk wording</div>
+  <p class="section-desc">One phrase, one number, one buffer: <code>&lt;action&gt; (&lt;X%&gt; risk) · &lt;Y&gt;m buffer</code>, no separate description. High risk now reads "Miss likely" per your latest wording rather than the earlier "Risky connection" — shorter and even more directly action-oriented.</p>
+
+  <div class="card">
+    <div class="head-row">
+      <div>
+        <div class="sched-time">21:44 – 01:07</div>
+        <div class="sched-meta">3h 23m · Direct</div>
+      </div>
+      <div class="predictions">
+        <div class="pred-cap">Predicted arrival</div>
+        <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">01:16</span><span class="pred-delta">+9m</span></span></div>
+        <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">01:22</span><span class="pred-delta">+15m</span></span></div>
+      </div>
+    </div>
+    <div class="train-bar"><div class="chip chip-ice" style="flex:1;">ICE 91</div></div>
+    <div class="station-row2"><span>Frankfurt(Main)Hbf</span><span>Köln Hbf</span></div>
+    <details class="itin-details">
+      <summary><span class="lbl-closed">Details</span><span class="lbl-open">Hide details</span><div class="caret"></div></summary>
+      <div class="itin">
+        <div class="timetable">
+          <div style="display:contents;">
+            <div class="tt-time">21:44</div>
+            <div class="tt-dot-col"><div class="tt-dot"></div><div class="tt-connector"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Frankfurt(Main)Hbf</span><span class="chip chip-ice chip-sm">ICE 91</span></div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time">01:07</div>
+            <div class="tt-dot-col"><div class="tt-dot hollow"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Köln Hbf</span></div>
+          </div>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="card strip-medium">
+    <div class="head-row">
+      <div>
+        <div class="sched-time">21:20 – 02:19</div>
+        <div class="sched-meta">4h 59m · 1 transfer</div>
+      </div>
+      <div class="predictions">
+        <div class="pred-cap">Predicted arrival</div>
+        <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">02:43</span><span class="pred-delta">+24m</span></span></div>
+        <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">03:19</span><span class="pred-delta">+60m</span></span></div>
+      </div>
+    </div>
+    <div class="train-bar">
+      <div class="chip chip-ice" style="flex:1;">ICE 22</div>
+      <div class="transfer-gap"></div>
+      <div class="chip chip-ice" style="flex:2.6;">ICE 42</div>
+    </div>
+    <div class="station-row2"><span>Frankfurt(Main)Hbf</span><span>Köln Hbf</span></div>
+    <details class="itin-details" open>
+      <summary><span class="lbl-closed">Details</span><span class="lbl-open">Hide details</span><div class="caret"></div></summary>
+      <div class="itin">
+        <div class="timetable">
+          <div style="display:contents;">
+            <div class="tt-time">21:20</div>
+            <div class="tt-dot-col"><div class="tt-dot"></div><div class="tt-connector"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Frankfurt(Main)Hbf</span><span class="chip chip-ice chip-sm">ICE 22</span></div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time">21:57</div>
+            <div class="tt-dot-col"><div class="tt-dot hollow"></div><div class="tt-connector dashed"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Mannheim Hbf</span></div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time"></div>
+            <div class="tt-dot-col"><div class="tt-connector dashed"></div></div>
+            <div class="transfer-bar risk-medium">
+              <span class="t-headline">Tight connection (20% risk)</span>
+              <span class="t-buffer">·  37m buffer</span>
+            </div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time">22:34</div>
+            <div class="tt-dot-col"><div class="tt-dot"></div><div class="tt-connector"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Mannheim Hbf</span><span class="chip chip-ice chip-sm">ICE 42</span></div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time">02:19</div>
+            <div class="tt-dot-col"><div class="tt-dot hollow"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Köln Hbf</span></div>
+          </div>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="card strip-high">
+    <div class="head-row">
+      <div>
+        <div class="sched-time">22:05 – 03:17</div>
+        <div class="sched-meta">5h 12m · 1 transfer</div>
+      </div>
+      <div class="predictions">
+        <div class="pred-cap">Predicted arrival</div>
+        <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">03:29</span><span class="pred-delta">+12m</span></span></div>
+        <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">04:12</span><span class="pred-delta">+55m</span></span></div>
+      </div>
+    </div>
+    <div class="train-bar">
+      <div class="chip chip-re" style="flex:1;">RE 8</div>
+      <div class="transfer-gap"></div>
+      <div class="chip chip-ice" style="flex:2.6;">ICE 26</div>
+    </div>
+    <div class="station-row2"><span>Frankfurt(Main)Hbf</span><span>Köln Hbf</span></div>
+    <details class="itin-details">
+      <summary><span class="lbl-closed">Details</span><span class="lbl-open">Hide details</span><div class="caret"></div></summary>
+      <div class="itin">
+        <div class="timetable">
+          <div style="display:contents;">
+            <div class="tt-time">22:05</div>
+            <div class="tt-dot-col"><div class="tt-dot"></div><div class="tt-connector"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Frankfurt(Main)Hbf</span><span class="chip chip-re chip-sm">RE 8</span></div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time">22:52</div>
+            <div class="tt-dot-col"><div class="tt-dot hollow"></div><div class="tt-connector dashed"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Mannheim Hbf</span></div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time"></div>
+            <div class="tt-dot-col"><div class="tt-connector dashed"></div></div>
+            <div class="transfer-bar risk-high">
+              <span class="t-headline">Miss likely (38% risk)</span>
+              <span class="t-buffer">·  14m buffer</span>
+            </div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time">23:06</div>
+            <div class="tt-dot-col"><div class="tt-dot"></div><div class="tt-connector"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Mannheim Hbf</span><span class="chip chip-ice chip-sm">ICE 26</span></div>
+          </div>
+          <div style="display:contents;">
+            <div class="tt-time">03:17</div>
+            <div class="tt-dot-col"><div class="tt-dot hollow"></div></div>
+            <div class="tt-station-wrap"><span class="tt-station">Köln Hbf</span></div>
+          </div>
+        </div>
+      </div>
+    </details>
+  </div>
+</div>
+
+<div class="note">
+  <h3>Notes</h3>
+  <ul>
+    <li><b>Risk wording:</b> <code>Safe connection (6% risk)</code> · <code>Tight connection (20% risk)</code> · <code>Miss likely (38% risk)</code> — each stands alone as one line next to the buffer time, no separate description clause.</li>
+    <li><b>Search card:</b> the swap button is vertically aligned to the input boxes, not the field labels above them — its column sits in the grid at <code>align-items:end</code> so it lines up with the bottom edge of both fields regardless of label length.</li>
+    <li><b>Sort control:</b> shown here as a two-option segmented pill rather than a Streamlit radio's dots, matching the toggle-like controls in your DB reference screenshot, while still mapping onto the same "Fastest scheduled" / "Safest (lowest risk)" choice your backend already takes.</li>
+    <li>This is a static mock — the swap button, date box, and sort pill are visual only here. Say the word when you want these wired into <code>ui_components.py</code>/<code>app.py</code> and I'll implement them for real (session-state-backed swap, actual <code>st.date_input</code>/<code>st.time_input</code>/<code>st.radio</code> underneath).</li>
+  </ul>
+</div>
+
+</body>
+</html>

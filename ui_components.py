@@ -1,20 +1,48 @@
-"""Streamlit rendering helpers for the route comparison and detail views (SPEC.md §5)."""
+"""Streamlit rendering helpers for the search form and route cards (SPEC.md §5).
 
-from datetime import datetime
+Visual system ported from the finalized UI/UX spec + design_mock.html: a white
+search card with a session-state-backed station swap, and route cards built as
+single HTML blobs (native <details>/<summary> for the itinerary, so expanding
+it never triggers a Streamlit rerun).
+"""
+
+from datetime import date, datetime, time
 
 import streamlit as st
 
 from engine import RouteSimulationResult, TransferRisk
-from models import Leg, Route, Station, Transfer
-
-# SPEC.md §5.3 — thresholds to be tuned during prototyping.
-# "high" uses official DB Red for brand-consistent risk signaling.
-RISK_COLORS = {"low": "#2E7D32", "medium": "#F5A623", "high": "#EB0016"}
+from models import Leg, Line, Route, Station, Transfer
 
 DB_RED = "#EB0016"
-DB_CHARCOAL = "#212529"
-DB_BORDER = "#DEE2E6"
-DB_LIGHT_GREY = "#F1F3F5"
+
+# design_mock.html §1 tokens, ported 1:1.
+INK = "#161a20"
+MUTED = "#68707c"
+FAINT = "#9aa1ab"
+LINE = "#e3e5e9"
+CARD_BG = "#ffffff"
+
+RISK_RANK = {"low": 0, "medium": 1, "high": 2}
+RISK_TOKENS = {
+    "low": {"bg": "#eaf7ee", "border": "#2e7d32", "text": "#1c6b2c"},
+    "medium": {"bg": "#fff5e3", "border": "#d98c1f", "text": "#8a5300"},
+    "high": {"bg": "#fdeceb", "border": "#d63a30", "text": "#a3231b"},
+}
+# Action-first wording per design_mock.html §2 notes — one phrase, one number, one buffer.
+RISK_WORDING = {"low": "Safe connection", "medium": "Tight connection", "high": "Miss likely"}
+
+# Line-type → DB category chip, per spec item 3 (ICE/IC = dark grey, RE/RB = light
+# grey with border, S-Bahn = DB green).
+LINE_TYPE_CHIP_CLASS = {
+    "ICE": "chip-ice",
+    "IC": "chip-ice",
+    "EC": "chip-ice",
+    "RE": "chip-re",
+    "RB": "chip-re",
+    "S-Bahn": "chip-sbahn",
+    "S": "chip-sbahn",
+}
+DEFAULT_CHIP_CLASS = "chip-ice"
 
 
 def classify_risk(miss_probability: float) -> str:
@@ -33,28 +61,170 @@ def format_duration(start: datetime, end: datetime) -> str:
 
 def _delay_label(scheduled: datetime, projected: datetime) -> str:
     minutes = round((projected - scheduled).total_seconds() / 60)
-    return "on time" if minutes <= 0 else f"+{minutes} min"
+    return "on time" if minutes <= 0 else f"+{minutes}m"
+
+
+def _chip_class(leg: Leg, lines_by_id: dict[str, Line]) -> str:
+    line = lines_by_id.get(leg.line_id)
+    return LINE_TYPE_CHIP_CLASS.get(line.type if line else "", DEFAULT_CHIP_CLASS)
+
+
+def inject_global_styles() -> None:
+    """Emits the app-wide <style> block once (design_mock.html §1–2, ported to CSS vars)."""
+    st.markdown(
+        f"""
+        <style>
+        :root {{
+            --ink:{INK}; --muted:{MUTED}; --faint:{FAINT}; --line:{LINE}; --card-bg:{CARD_BG};
+            --low-bg:{RISK_TOKENS["low"]["bg"]}; --low-border:{RISK_TOKENS["low"]["border"]}; --low-text:{RISK_TOKENS["low"]["text"]};
+            --med-bg:{RISK_TOKENS["medium"]["bg"]}; --med-border:{RISK_TOKENS["medium"]["border"]}; --med-text:{RISK_TOKENS["medium"]["text"]};
+            --high-bg:{RISK_TOKENS["high"]["bg"]}; --high-border:{RISK_TOKENS["high"]["border"]}; --high-text:{RISK_TOKENS["high"]["text"]};
+            --chip-ice:#33383f; --chip-re-bg:#d3d6db; --chip-re-text:#20232a; --chip-sbahn:#0f8a3f;
+            --db-red:{DB_RED};
+        }}
+
+        /* ---- page shell: cap width so the app doesn't stretch on ultra-wide monitors ---- */
+        [data-testid="stMainBlockContainer"]{{max-width:1050px !important; margin-left:auto !important; margin-right:auto !important;}}
+
+        /* ---- app shell (typography/geometry only — no emoji, per spec item 1) ---- */
+        .app-banner{{background:var(--db-red); border-radius:10px; padding:1.1rem 1.5rem; margin-bottom:1.5rem; display:flex; align-items:center; gap:0.9rem;}}
+        .db-mark{{background:#fff; color:var(--db-red); font-weight:800; font-size:1rem; letter-spacing:.02em; border-radius:6px; padding:0.4rem 0.55rem; line-height:1;}}
+        .app-banner-title{{color:#fff; font-size:1.5rem; font-weight:700; line-height:1.25;}}
+        .app-banner-sub{{color:#FBD7DB; font-size:0.85rem; margin-top:2px;}}
+
+        /* ---- search card (design_mock.html §1) ---- */
+        .st-key-search_card{{background:var(--card-bg); border:1px solid var(--line); border-radius:12px; box-shadow:0 2px 6px rgba(20,20,30,.06); padding:18px 20px 20px;}}
+        .search-title{{font-size:15px; font-weight:700; margin-bottom:14px;}}
+        .search-divider{{border:none; border-top:1px solid var(--line); margin:6px 0 14px;}}
+        .st-key-search_card [data-testid="stWidgetLabel"] p{{font-size:11.5px; font-weight:600; color:var(--muted);}}
+        .st-key-search_card [data-testid="stSelectbox"] [role="group"],
+        .st-key-search_card [data-testid="stTimeInputTimeDisplay"],
+        .st-key-search_card [data-testid="stDateInputField"]{{background:#f4f5f7 !important; border-color:var(--line) !important; border-radius:8px !important; font-weight:600;}}
+
+        /* Swap button: force a true 36px circle (Streamlit's own button min-height
+           otherwise wins over a plain height:36px and stretches it into an oval).
+           Streamlit's own vertical_alignment="bottom" on the station-row columns
+           already lands the button flush against the *bottom* of the 40px input
+           boxes (not the labels) — a 2px margin-bottom then nudges it up from
+           flush-bottom to truly centered within that 40px box height, since a
+           36px button flush to the bottom of a 40px box sits 2px low otherwise.
+           Horizontally, the button's own wrapper chain (stButton, stElementContainer)
+           shrink-wraps tight to the button's 36px width, so margin:auto on the
+           button itself has no free space to distribute. The actual free space —
+           the middle column being wider than the button — lives one level up, on
+           stElementContainer as a flex-item of stVerticalBlock (the column's own
+           flex container); centering has to happen there via the .st-key-swap_stations
+           class (which targets that exact stElementContainer), not on the button.
+           The icon itself is a Material Symbol (see render_search_card), not the
+           "⇄" text glyph — text-glyph baselines vary by font/OS and can look
+           visually off-center even when the button's own box measures centered. */
+        .st-key-swap_stations{{margin-left:auto !important; margin-right:auto !important;}}
+        .st-key-swap_stations button{{width:36px !important; height:36px !important; min-height:36px !important; margin-bottom:2px !important; border-radius:50% !important; padding:0 !important; background:#fff; border:1px solid var(--line); box-shadow:0 1px 2px rgba(20,20,30,.08); color:var(--muted);}}
+
+        /* Secondary row: the segmented control's pill renders shorter (32px) than
+           the date/time input boxes (40px) — match heights so Date, Departure time,
+           and Sort share one consistent baseline instead of the pill trailing low.
+           Streamlit's default flex-basis is "fit-content", so the two options grow
+           proportionally from their own (unequal) text widths rather than splitting
+           the row evenly — flex-basis:0 forces a true 50/50 split regardless of
+           how much longer one option's label is than the other's. */
+        .st-key-search_card [data-testid="stButtonGroup"] [role="radiogroup"]{{min-height:40px !important;}}
+        .st-key-search_card [data-testid="stButtonGroup"] button[role="radio"]{{min-height:40px !important; flex:1 1 0 !important;}}
+        .st-key-search_card [data-testid="stButtonGroup"] button[aria-checked="true"]{{background:var(--ink) !important; border-color:var(--ink) !important;}}
+        .st-key-search_card [data-testid="stButtonGroup"] button[aria-checked="true"] p{{color:#fff !important;}}
+
+        /* ---- route cards (design_mock.html §2) ---- */
+        .card{{background:var(--card-bg); border:1px solid var(--line); border-radius:10px; overflow:hidden; box-shadow:0 1px 2px rgba(20,20,30,.04); margin-bottom:14px; border-left:4px solid var(--line);}}
+        .card.strip-low{{border-left-color:var(--low-border);}}
+        .card.strip-medium{{border-left-color:var(--med-border);}}
+        .card.strip-high{{border-left-color:var(--high-border);}}
+
+        .head-row{{display:grid; grid-template-columns:1fr auto; align-items:start; padding:16px 16px 0; gap:12px;}}
+        .sched-time{{font-size:20px; font-weight:700; font-variant-numeric:tabular-nums;}}
+        .sched-meta{{font-size:12px; color:var(--muted); margin-top:2px;}}
+
+        .predictions{{border:1px solid var(--line); border-radius:8px; padding:7px 13px 8px;}}
+        .pred-cap{{font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--faint); text-align:right; margin-bottom:5px;}}
+
+        /* Wide cards: Expected/Safest sit side-by-side as two single-line rows
+           (name, value, delta all in one nowrap flow), divided by a dashed rule
+           — this is what keeps the value+delta from breaking onto a second line
+           when the box would otherwise be squeezed. Narrow viewports (§ below)
+           fall back to a vertical stack instead. */
+        .pred-rows{{display:flex; flex-direction:row; align-items:center; gap:14px;}}
+        .pred-row{{display:flex; flex-direction:row; align-items:baseline; gap:6px; white-space:nowrap;}}
+        .pred-row + .pred-row{{border-left:1px dashed var(--line); padding-left:14px;}}
+        .pred-name{{font-size:11px; font-weight:600; color:var(--muted); white-space:nowrap;}}
+        .pred-value{{font-variant-numeric:tabular-nums; white-space:nowrap;}}
+
+        /* Expected is context, Safest is the headline recommendation — the two
+           sides should not read as equal-weight siblings. Expected is pushed
+           down in weight and color; Safest is pushed up in both. */
+        .pred-row.expected .pred-value{{font-size:13px; font-weight:500; color:var(--muted);}}
+        .pred-row.safest .pred-name{{color:var(--ink); font-weight:700;}}
+        .pred-row.safest .pred-value{{font-size:17px; font-weight:800; color:var(--ink);}}
+        .pred-delta{{font-size:10px; color:var(--faint); font-weight:600; margin-left:3px; white-space:nowrap;}}
+
+        @media (max-width: 480px) {{
+            .pred-rows{{flex-direction:column; align-items:stretch; gap:0;}}
+            .pred-row{{justify-content:space-between;}}
+            .pred-row + .pred-row{{border-left:none; border-top:1px dashed var(--line); margin-top:5px; padding-top:6px; padding-left:0;}}
+        }}
+
+        .train-bar{{display:flex; gap:3px; padding:12px 16px 0;}}
+        .chip{{display:flex; align-items:center; justify-content:center; min-height:34px; border-radius:5px; font-size:12.5px; font-weight:700; letter-spacing:.02em; padding:0 10px; min-width:78px;}}
+        .chip-ice{{background:var(--chip-ice); color:#fff;}}
+        .chip-re{{background:var(--chip-re-bg); color:var(--chip-re-text); border:1px solid #b9bdc4;}}
+        .chip-sbahn{{background:var(--chip-sbahn); color:#fff;}}
+        .transfer-gap{{width:3px; border-left:2px dashed var(--faint); margin:2px 3px; flex:0 0 auto;}}
+
+        .station-row2{{display:flex; justify-content:space-between; padding:9px 16px 2px; font-size:13.5px; font-weight:600;}}
+        .station-row2 span:last-child{{text-align:right;}}
+
+        .itin-details{{border-top:1px solid var(--line); margin-top:10px;}}
+        .itin-details > summary{{list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px; font-size:12.5px; font-weight:600; color:var(--muted); user-select:none;}}
+        .itin-details > summary::-webkit-details-marker{{display:none;}}
+        .itin-details > summary::marker{{content:"";}}
+        .itin-details > summary .caret{{width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid var(--faint); transition:transform .15s ease;}}
+        .itin-details[open] > summary .caret{{transform:rotate(180deg);}}
+        .itin-details > summary .lbl-closed{{display:inline;}}
+        .itin-details > summary .lbl-open{{display:none;}}
+        .itin-details[open] > summary .lbl-closed{{display:none;}}
+        .itin-details[open] > summary .lbl-open{{display:inline;}}
+
+        .itin{{padding:6px 16px 4px;}}
+        .timetable{{display:grid; grid-template-columns:42px 20px 1fr; row-gap:0; column-gap:9px;}}
+        .tt-time{{font-variant-numeric:tabular-nums; font-size:12.5px; font-weight:600; padding:9px 0 9px;}}
+        .tt-dot-col{{display:flex; flex-direction:column; align-items:center;}}
+        .tt-dot{{width:9px; height:9px; border-radius:50%; background:var(--ink); margin-top:14px; flex:0 0 auto;}}
+        .tt-dot.hollow{{background:#fff; border:2px solid var(--ink); width:7px; height:7px;}}
+        .tt-connector{{flex:1 1 auto; width:2px; background:var(--ink); margin-top:2px;}}
+        .tt-connector.dashed{{background:none; border-left:2px dashed var(--faint); width:0;}}
+        .tt-station-wrap{{padding:8px 0; display:flex; align-items:center; justify-content:space-between; gap:8px;}}
+        .tt-station{{font-size:13px; font-weight:600;}}
+        .chip-sm{{min-height:auto; padding:3px 8px; font-size:10.5px; min-width:0; border-radius:4px;}}
+
+        .transfer-bar{{border-radius:7px; padding:9px 12px; margin:3px 0; align-self:center; display:flex; align-items:center; gap:8px; flex-wrap:wrap;}}
+        .transfer-bar .t-headline{{font-size:12.5px; font-weight:700;}}
+        .transfer-bar .t-buffer{{font-size:12px; font-weight:400; opacity:.75;}}
+        .risk-low{{background:var(--low-bg); color:var(--low-text);}}
+        .risk-medium{{background:var(--med-bg); color:var(--med-text);}}
+        .risk-high{{background:var(--high-bg); color:var(--high-text);}}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_header_banner(n_iterations: int) -> None:
-    """DB-style red banner replacing a plain st.title — the app's branding element."""
+    """DB-style red banner. Uses a typographic "DB" mark instead of a train emoji."""
     st.markdown(
         f"""
-        <div style="
-            background: {DB_RED};
-            border-radius: 10px;
-            padding: 1.1rem 1.5rem;
-            margin-bottom: 1.5rem;
-            display: flex;
-            align-items: center;
-            gap: 0.9rem;
-        ">
-            <span style="font-size: 2rem; line-height: 1;">🚆</span>
+        <div class="app-banner">
+            <div class="db-mark">DB</div>
             <div>
-                <div style="color: #FFFFFF; font-size: 1.5rem; font-weight: 700; line-height: 1.25;">
-                    DB Risk &amp; Rescue
-                </div>
-                <div style="color: #FBD7DB; font-size: 0.85rem;">
+                <div class="app-banner-title">DB Risk &amp; Rescue</div>
+                <div class="app-banner-sub">
                     Probability-aware trip planning — True Expected Time of Arrival via
                     {n_iterations:,}-iteration Monte Carlo simulation.
                 </div>
@@ -65,148 +235,217 @@ def render_header_banner(n_iterations: int) -> None:
     )
 
 
-def render_route_card(
-    route: Route,
-    result: RouteSimulationResult,
+def render_search_card(
+    station_ids: list[str],
     stations_by_id: dict[str, Station],
-    is_selected: bool = False,
-) -> bool:
-    """Renders one route card per SPEC.md §5.2. Returns True if its Details button was clicked."""
-    origin = stations_by_id[route.origin_station_id].name
-    destination = stations_by_id[route.destination_station_id].name
-    duration = format_duration(route.scheduled_departure, route.scheduled_arrival)
-    n_transfers = len(route.transfers)
+    default_origin_id: str,
+    default_destination_id: str,
+    default_departure_time: time,
+    sort_options: tuple[str, str],
+    *,
+    calendar_range: tuple[date, date] | None = None,
+    default_date: date | None = None,
+) -> tuple[str, str, date | None, time, str]:
+    """Renders the "Plan your trip" search card (design_mock.html §1).
 
-    with st.container(border=True):
-        header_col, badge_col = st.columns([5, 1])
-        header_col.markdown(f"**{origin} → {destination}**")
-        if is_selected:
-            badge_col.markdown(
-                f'<span style="background:{DB_RED}; color:#FFFFFF; padding:0.2rem 0.6rem; '
-                f'border-radius:999px; font-size:0.75rem; font-weight:600;">📍 Viewing</span>',
-                unsafe_allow_html=True,
+    Returns (origin_id, destination_id, service_date, departure_time, sort_choice).
+    service_date is None when calendar_range isn't provided (Phase 1/2 datasets
+    are baked to a single fixed calendar date).
+    """
+    if "search_origin_id" not in st.session_state or st.session_state.search_origin_id not in station_ids:
+        st.session_state.search_origin_id = default_origin_id
+    if (
+        "search_destination_id" not in st.session_state
+        or st.session_state.search_destination_id not in station_ids
+    ):
+        st.session_state.search_destination_id = default_destination_id
+    if "search_sort" not in st.session_state:
+        st.session_state.search_sort = sort_options[0]
+    if calendar_range is not None:
+        calendar_min, calendar_max = calendar_range
+        if "search_date" not in st.session_state or not (calendar_min <= st.session_state.search_date <= calendar_max):
+            st.session_state.search_date = default_date
+
+    def _swap_stations() -> None:
+        st.session_state.search_origin_id, st.session_state.search_destination_id = (
+            st.session_state.search_destination_id,
+            st.session_state.search_origin_id,
+        )
+
+    with st.container(border=False, key="search_card"):
+        st.markdown('<div class="search-title">Plan your trip</div>', unsafe_allow_html=True)
+
+        station_cols = st.columns([5, 1, 5], vertical_alignment="bottom", gap="small")
+        origin_id = station_cols[0].selectbox(
+            "Origin",
+            options=station_ids,
+            format_func=lambda sid: stations_by_id[sid].name,
+            key="search_origin_id",
+        )
+        with station_cols[1]:
+            st.button("", icon=":material/swap_horiz:", key="swap_stations", on_click=_swap_stations)
+        destination_id = station_cols[2].selectbox(
+            "Destination",
+            options=station_ids,
+            format_func=lambda sid: stations_by_id[sid].name,
+            key="search_destination_id",
+        )
+
+        st.markdown('<hr class="search-divider">', unsafe_allow_html=True)
+
+        if calendar_range is not None:
+            calendar_min, calendar_max = calendar_range
+            datetime_cols = st.columns([1, 1], vertical_alignment="bottom", gap="small")
+            service_date = datetime_cols[0].date_input(
+                "Date", min_value=calendar_min, max_value=calendar_max, key="search_date"
+            )
+            departure_time = datetime_cols[1].time_input(
+                "Departure at or after", value=default_departure_time, key="search_time"
+            )
+        else:
+            service_date = None
+            departure_time = st.time_input(
+                "Departure at or after", value=default_departure_time, key="search_time"
             )
 
-        st.caption(
-            f"{route.scheduled_departure:%H:%M} → {route.scheduled_arrival:%H:%M}  ·  "
-            f"{duration}  ·  {n_transfers} transfer{'s' if n_transfers != 1 else ''}"
+        st.markdown('<hr class="search-divider">', unsafe_allow_html=True)
+
+        sort_choice = st.segmented_control(
+            "Sort by", sort_options, key="search_sort", required=True, width="stretch"
         )
 
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Scheduled arrival", f"{route.scheduled_arrival:%H:%M}")
-        m2.metric(
-            "Mean True ETA",
-            f"{result.mean_eta:%H:%M}",
-            delta=_delay_label(route.scheduled_arrival, result.mean_eta),
-            delta_color="inverse",
-        )
-        m3.metric(
-            "P85 True ETA",
-            f"{result.p85_eta:%H:%M}",
-            delta=_delay_label(route.scheduled_arrival, result.p85_eta),
-            delta_color="inverse",
-        )
-        clicked = m4.button(
-            "View timeline", key=f"select_{route.route_id}", use_container_width=True
-        )
-
-    return clicked
+    return origin_id, destination_id, service_date, departure_time, sort_choice
 
 
-def render_route_timeline(
+def _train_bar_html(ordered_legs: list[Leg], lines_by_id: dict[str, Line]) -> str:
+    """Full-width chip segments sized proportional to each leg's travel time."""
+    parts = []
+    for i, leg in enumerate(ordered_legs):
+        if i > 0:
+            parts.append('<div class="transfer-gap"></div>')
+        duration_minutes = max((leg.scheduled_arrival - leg.scheduled_departure).total_seconds() / 60, 1)
+        parts.append(
+            f'<div class="chip {_chip_class(leg, lines_by_id)}" style="flex:{duration_minutes:.1f};">'
+            f"{leg.line_id}</div>"
+        )
+    return f'<div class="train-bar">{"".join(parts)}</div>'
+
+
+def _itinerary_html(
     route: Route,
     legs_by_id: dict[str, Leg],
     transfers_by_id: dict[str, Transfer],
     stations_by_id: dict[str, Station],
+    lines_by_id: dict[str, Line],
     transfer_risks: list[TransferRisk],
-) -> None:
-    """Renders the leg → transfer → leg horizontal timeline per SPEC.md §5.3."""
+) -> str:
+    """Vertical CSS-grid itinerary: solid dots/lines for legs, hollow rings and
+    dashed lines for interchanges, with an inline risk-colored transfer bar."""
     ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
     risk_by_transfer_id = {r.transfer_id: r for r in transfer_risks}
+    n_legs = len(ordered_legs)
 
-    leg_width, gap, node_radius, height = 220, 90, 16, 140
-    total_width = 40 + len(ordered_legs) * leg_width + max(len(ordered_legs) - 1, 0) * gap
-    y_mid = height / 2 - 5
-
-    parts = [
-        f'<svg width="{total_width}" height="{height}" '
-        f'viewBox="0 0 {total_width} {height}" xmlns="http://www.w3.org/2000/svg" '
-        f'font-family="sans-serif" style="max-width:100%;">'
-    ]
-
-    cursor = 20
+    rows = []
     for i, leg in enumerate(ordered_legs):
         origin = stations_by_id[leg.origin_station_id].name
         destination = stations_by_id[leg.destination_station_id].name
+        is_last_leg = i == n_legs - 1
+        chip_class = _chip_class(leg, lines_by_id)
 
-        parts.append(
-            f'<rect x="{cursor}" y="{y_mid - 22}" width="{leg_width}" height="48" rx="8" '
-            f'fill="{DB_LIGHT_GREY}" stroke="{DB_BORDER}" stroke-width="1.5"/>'
-        )
-        parts.append(
-            f'<rect x="{cursor}" y="{y_mid - 22}" width="{leg_width}" height="4" rx="2" fill="{DB_RED}"/>'
-        )
-        parts.append(
-            f'<text x="{cursor + leg_width / 2}" y="{y_mid - 3}" text-anchor="middle" '
-            f'font-size="12" font-weight="700" fill="{DB_CHARCOAL}">{leg.line_id}</text>'
-        )
-        parts.append(
-            f'<text x="{cursor + leg_width / 2}" y="{y_mid + 13}" text-anchor="middle" '
-            f'font-size="10" fill="#495057">{origin} → {destination}</text>'
-        )
-        parts.append(
-            f'<text x="{cursor + leg_width / 2}" y="{y_mid + 52}" text-anchor="middle" '
-            f'font-size="10" fill="#6c757d">{leg.scheduled_departure:%H:%M} – {leg.scheduled_arrival:%H:%M}</text>'
+        rows.append(
+            '<div style="display:contents;">'
+            f'<div class="tt-time">{leg.scheduled_departure:%H:%M}</div>'
+            '<div class="tt-dot-col"><div class="tt-dot"></div><div class="tt-connector"></div></div>'
+            f'<div class="tt-station-wrap"><span class="tt-station">{origin}</span>'
+            f'<span class="chip {chip_class} chip-sm">{leg.line_id}</span></div>'
+            "</div>"
         )
 
-        leg_right_edge = cursor + leg_width
-        cursor = leg_right_edge
+        connector = '<div class="tt-connector dashed"></div>' if not is_last_leg else ""
+        rows.append(
+            '<div style="display:contents;">'
+            f'<div class="tt-time">{leg.scheduled_arrival:%H:%M}</div>'
+            f'<div class="tt-dot-col"><div class="tt-dot hollow"></div>{connector}</div>'
+            f'<div class="tt-station-wrap"><span class="tt-station">{destination}</span></div>'
+            "</div>"
+        )
 
-        if i < len(route.transfers):
+        if not is_last_leg:
             transfer_id = route.transfers[i]
             transfer = transfers_by_id[transfer_id]
             risk = risk_by_transfer_id[transfer_id]
             risk_level = classify_risk(risk.miss_probability)
-            color = RISK_COLORS[risk_level]
-            # Amber is too light for white text to stay readable (WCAG contrast).
-            node_text_color = DB_CHARCOAL if risk_level == "medium" else "#FFFFFF"
-            node_cx = cursor + gap / 2
-
-            parts.append(
-                f'<line x1="{leg_right_edge}" y1="{y_mid}" x2="{cursor + gap}" y2="{y_mid}" '
-                f'stroke="#ADB5BD" stroke-width="2" stroke-dasharray="4,3"/>'
-            )
-            parts.append(
-                f'<circle cx="{node_cx}" cy="{y_mid}" r="{node_radius}" fill="{color}" '
-                f'stroke="#FFFFFF" stroke-width="2">'
-                f'<title>{stations_by_id[transfer.station_id].name}: '
-                f'{risk.miss_probability:.0%} chance of missing this connection '
-                f'(scheduled buffer {transfer.scheduled_buffer_minutes} min)</title></circle>'
-            )
-            parts.append(
-                f'<text x="{node_cx}" y="{y_mid + 4}" text-anchor="middle" font-size="10" '
-                f'font-weight="700" fill="{node_text_color}">{risk.miss_probability:.0%}</text>'
-            )
-            parts.append(
-                f'<text x="{node_cx}" y="{y_mid - node_radius - 10}" text-anchor="middle" '
-                f'font-size="9" fill="{DB_CHARCOAL}">{stations_by_id[transfer.station_id].name}</text>'
+            rows.append(
+                '<div style="display:contents;">'
+                '<div class="tt-time"></div>'
+                '<div class="tt-dot-col"><div class="tt-connector dashed"></div></div>'
+                f'<div class="transfer-bar risk-{risk_level}">'
+                f'<span class="t-headline">{RISK_WORDING[risk_level]} ({risk.miss_probability:.0%} risk)</span>'
+                f'<span class="t-buffer">·  {transfer.scheduled_buffer_minutes} min</span>'
+                "</div></div>"
             )
 
-            cursor += gap
+    return (
+        '<details class="itin-details"><summary>'
+        '<span class="lbl-closed">Details</span><span class="lbl-open">Hide details</span>'
+        '<div class="caret"></div></summary>'
+        f'<div class="itin"><div class="timetable">{"".join(rows)}</div></div>'
+        "</details>"
+    )
 
-    parts.append("</svg>")
-    st.markdown("".join(parts), unsafe_allow_html=True)
 
-    legend_labels = [
-        ("low", "Low risk — P(miss) < 10%"),
-        ("medium", "Medium risk — 10–30%"),
-        ("high", "High risk — > 30%"),
-    ]
-    legend_cols = st.columns(3)
-    for col, (level, label) in zip(legend_cols, legend_labels):
-        col.markdown(
-            f'<span style="display:inline-block; width:0.7rem; height:0.7rem; '
-            f'border-radius:50%; background:{RISK_COLORS[level]}; margin-right:0.4rem;"></span>'
-            f'{label}',
-            unsafe_allow_html=True,
-        )
+def render_route_card(
+    route: Route,
+    result: RouteSimulationResult,
+    stations_by_id: dict[str, Station],
+    legs_by_id: dict[str, Leg],
+    transfers_by_id: dict[str, Transfer],
+    lines_by_id: dict[str, Line],
+) -> None:
+    """Renders one DB Navigator-style route card as a single HTML block, per
+    design_mock.html §2 — the itinerary's <details> toggle needs no Streamlit
+    rerun since the whole card, including its expander, is static markup."""
+    duration = format_duration(route.scheduled_departure, route.scheduled_arrival)
+    n_transfers = len(route.transfers)
+    ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
+    origin = stations_by_id[route.origin_station_id].name
+    destination = stations_by_id[route.destination_station_id].name
+
+    if n_transfers == 0:
+        transfer_meta = "Direct"
+    else:
+        transfer_meta = f"{n_transfers} transfer" + ("" if n_transfers == 1 else "s")
+
+    worst_level = None
+    for risk in result.transfer_risks:
+        level = classify_risk(risk.miss_probability)
+        if worst_level is None or RISK_RANK[level] > RISK_RANK[worst_level]:
+            worst_level = level
+    strip_class = f" strip-{worst_level}" if worst_level else ""
+
+    expected_delay = _delay_label(route.scheduled_arrival, result.mean_eta)
+    safest_delay = _delay_label(route.scheduled_arrival, result.p85_eta)
+
+    html = f"""
+    <div class="card{strip_class}">
+      <div class="head-row">
+        <div>
+          <div class="sched-time">{route.scheduled_departure:%H:%M} – {route.scheduled_arrival:%H:%M}</div>
+          <div class="sched-meta">{duration} · {transfer_meta}</div>
+        </div>
+        <div class="predictions">
+          <div class="pred-cap">Predicted arrival</div>
+          <div class="pred-rows">
+            <div class="pred-row expected"><span class="pred-name">Expected</span>
+              <span><span class="pred-value">{result.mean_eta:%H:%M}</span><span class="pred-delta">{expected_delay}</span></span></div>
+            <div class="pred-row safest"><span class="pred-name">Safest</span>
+              <span><span class="pred-value">{result.p85_eta:%H:%M}</span><span class="pred-delta">{safest_delay}</span></span></div>
+          </div>
+        </div>
+      </div>
+      {_train_bar_html(ordered_legs, lines_by_id)}
+      <div class="station-row2"><span>{origin}</span><span>{destination}</span></div>
+      {_itinerary_html(route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, result.transfer_risks)}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
