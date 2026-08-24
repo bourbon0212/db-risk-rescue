@@ -29,23 +29,46 @@ from datetime import datetime
 from models import Leg, MockDataset, Route, Transfer
 
 
+def build_route_search_indexes(
+    dataset: MockDataset,
+) -> tuple[dict[str, Leg], dict[str, list[Transfer]]]:
+    """The leg-by-id and transfer-by-from-leg lookup tables find_candidate_routes
+    needs, built once from a dataset so a whole search batch -- the top-level
+    search plus every transfer node's fallback sub-search
+    (engine.py's precompute_fallback_plans) -- can share one pair of indexes
+    via the `indexes` param below instead of each call rebuilding both from
+    scratch (SPEC.md §3.5)."""
+    legs_by_id: dict[str, Leg] = {leg.leg_id: leg for leg in dataset.legs}
+    transfers_by_from_leg: dict[str, list[Transfer]] = defaultdict(list)
+    for transfer in dataset.transfers:
+        transfers_by_from_leg[transfer.from_leg_id].append(transfer)
+    return legs_by_id, transfers_by_from_leg
+
+
 def find_candidate_routes(
     dataset: MockDataset,
     origin_id: str,
     destination_id: str,
     departure_time: datetime,
+    indexes: tuple[dict[str, Leg], dict[str, list[Transfer]]] | None = None,
 ) -> list[Route]:
     """Direct, single-transfer, and two-transfer Route candidates from
     origin to destination, departing at or after departure_time, built
     from dataset.legs/transfers.
+
+    `indexes`, if given, must be a prior build_route_search_indexes(dataset)
+    result -- reusing it lets a caller that issues several searches against
+    the same dataset in one batch (a top-level search plus per-transfer
+    fallback sub-searches) skip rebuilding both lookup tables on every call.
+    Left as None, the indexes are built fresh from `dataset`, unchanged from
+    this function's original behavior.
     """
     if origin_id == destination_id:
         return []
 
-    legs_by_id: dict[str, Leg] = {leg.leg_id: leg for leg in dataset.legs}
-    transfers_by_from_leg: dict[str, list[Transfer]] = defaultdict(list)
-    for transfer in dataset.transfers:
-        transfers_by_from_leg[transfer.from_leg_id].append(transfer)
+    legs_by_id, transfers_by_from_leg = (
+        indexes if indexes is not None else build_route_search_indexes(dataset)
+    )
 
     routes: list[Route] = []
 

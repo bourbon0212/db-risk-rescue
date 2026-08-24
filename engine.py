@@ -56,6 +56,7 @@ def precompute_fallback_plans(
     legs_by_id: dict[str, Leg],
     transfers_by_id: dict[str, Transfer],
     route_search_fn: Callable[[str, str, datetime], list[Route]] | None = None,
+    search_indexes: tuple[dict[str, Leg], dict[str, list[Transfer]]] | None = None,
 ) -> dict[str, FallbackPlan | None]:
     """SPEC.md §3.4 — one fallback lookup per transfer node in `route`,
     computed once before the Monte Carlo loop so a missed connection is an
@@ -79,13 +80,20 @@ def precompute_fallback_plans(
     node before the Monte Carlo loop, never inside it — the O(1)-per-
     iteration guarantee only depends on that call count, not on which
     backend answers each call.
+
+    `search_indexes`, if given, is a prior
+    pipelines.route_search.build_route_search_indexes(dataset) result,
+    passed straight through to the default find_candidate_routes call so a
+    caller running several routes' worth of fallback searches against the
+    same dataset in one batch can share one pair of indexes instead of each
+    sub-search rebuilding them. Ignored when route_search_fn is given.
     """
     ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
     ordered_transfers = [transfers_by_id[t_id] for t_id in route.transfers]
 
     search = route_search_fn or (
         lambda origin_id, destination_id, departure_time: find_candidate_routes(
-            dataset, origin_id, destination_id, departure_time
+            dataset, origin_id, destination_id, departure_time, indexes=search_indexes
         )
     )
 

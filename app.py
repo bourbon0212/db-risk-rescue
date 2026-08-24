@@ -13,7 +13,10 @@ from data_loader import MOCK_DATA_PATH, REAL_DATA_PATH, load_dataset
 from engine import RouteSimulationResult, index_dataset, precompute_fallback_plans, simulate_route
 from models import Leg, Line, MockDataset, Route, Station, Transfer
 from pipelines import route_search_duckdb
-from pipelines.route_search import find_candidate_routes
+from pipelines.route_search import (
+    build_route_search_indexes,
+    find_candidate_routes,
+)
 from ui_components import (
     inject_global_styles,
     render_header_banner,
@@ -70,6 +73,16 @@ def get_dataset(path: Path) -> MockDataset:
     return load_dataset(path)
 
 
+@st.cache_data
+def get_search_indexes(path: Path) -> tuple[dict[str, Leg], dict[str, list[Transfer]]]:
+    """legs_by_id/transfers_by_from_leg for `path`'s dataset, built once and
+    cached per path (same pattern as get_dataset) -- shared by search_routes'
+    top-level find_candidate_routes call and every simulate_one_route call's
+    precompute_fallback_plans, instead of each of those rebuilding both
+    lookup tables from scratch (SPEC.md §3.5)."""
+    return build_route_search_indexes(get_dataset(path))
+
+
 @st.cache_resource
 def get_warehouse_connection() -> duckdb.DuckDBPyConnection:
     return db.get_connection(read_only=True)
@@ -84,7 +97,10 @@ def search_routes(
     more" click never re-runs the search, and kept separate from simulation
     so simulate_one_route (below) can cache per-route instead of per-batch."""
     dataset = get_dataset(path)
-    return find_candidate_routes(dataset, origin_id, destination_id, departure_time)
+    search_indexes = get_search_indexes(path)
+    return find_candidate_routes(
+        dataset, origin_id, destination_id, departure_time, indexes=search_indexes
+    )
 
 
 @st.cache_data(show_spinner=False)
@@ -94,6 +110,7 @@ def simulate_one_route(
     n_iterations: int,
     seed: int,
     _route: Route,
+    _search_indexes: tuple[dict[str, Leg], dict[str, list[Transfer]]],
 ) -> RouteSimulationResult:
     """Cached per route_id (+ dataset path/n_iterations/seed), not per
     display_limit batch -- a "Load more" click that reveals routes 6-10 only
@@ -103,10 +120,16 @@ def simulate_one_route(
     the run parameters) is a sufficient, stable cache key -- `_route` is
     passed only to avoid recomputing it, not for cache identity (leading
     underscore = excluded from Streamlit's cache-key hash, see
-    https://docs.streamlit.io/develop/concepts/architecture/caching)."""
+    https://docs.streamlit.io/develop/concepts/architecture/caching).
+    `_search_indexes` (a get_search_indexes(path) result) is likewise
+    excluded from the key -- it's wholly determined by `path`, already part
+    of the key -- and is passed through to precompute_fallback_plans so its
+    fallback search reuses it instead of rebuilding it (SPEC.md §3.5)."""
     dataset = get_dataset(path)
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
-    fallback_plans = precompute_fallback_plans(_route, dataset, legs_by_id, transfers_by_id)
+    fallback_plans = precompute_fallback_plans(
+        _route, dataset, legs_by_id, transfers_by_id, search_indexes=_search_indexes
+    )
     return simulate_route(
         _route, legs_by_id, transfers_by_id, lines_by_id,
         n_iterations=n_iterations, rng=random.Random(seed), fallback_plans=fallback_plans,
@@ -291,10 +314,11 @@ else:
     total_route_count = len(candidate_routes)
     sliced_routes = candidate_routes[: st.session_state.display_limit]
 
+    search_indexes = get_search_indexes(data_source_path)
     t_sim0 = time.perf_counter()
     results_by_route = {
         route.route_id: simulate_one_route(
-            data_source_path, route.route_id, N_ITERATIONS, RNG_SEED, route
+            data_source_path, route.route_id, N_ITERATIONS, RNG_SEED, route, search_indexes
         )
         for route in sliced_routes
     }
