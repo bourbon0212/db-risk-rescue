@@ -2,7 +2,7 @@
 sibling of pipelines/route_search.py's find_candidate_routes, plus the
 dynamic-calendar-date filtering and legs_by_id/transfers_by_id mutation
 contract that lets engine.py's precompute_fallback_plans/simulate_route
-consume it exactly like the Phase 1/2 in-memory path (§6.3).
+consume it exactly like the Phase 1/2 in-memory path (§3.5).
 
 Builds a small synthetic warehouse by hand via pipelines/warehouse_writer.py
 -- same station/leg/transfer shape as test_route_search.py's
@@ -255,7 +255,7 @@ def test_calendar_window_returns_min_and_max(synthetic_warehouse):
 def test_precompute_fallback_plans_and_simulate_route_work_against_duckdb(synthetic_warehouse):
     """Full integration: engine.py's precompute_fallback_plans/simulate_route,
     driven by a route_search_fn closure over route_search_duckdb, must
-    behave exactly like the Phase 1/2 in-memory path -- proving §6.3's
+    behave exactly like the Phase 1/2 in-memory path -- proving §3.5's
     promise that the simulation core needs no changes to consume this
     backend."""
     legs_by_id, transfers_by_id = {}, {}
@@ -290,3 +290,91 @@ def test_precompute_fallback_plans_and_simulate_route_work_against_duckdb(synthe
     assert result.n_iterations == 50
     assert result.transfer_risks[0].transfer_id == "TR1"
     assert result.transfer_risks[0].simulated_miss_rate == 0.0
+
+
+# --- no cycles / no overshooting the destination ----------------------------
+
+
+@pytest.fixture
+def overshoot_warehouse(conn) -> duckdb.DuckDBPyConnection:
+    """A -> B directly reaches the destination (B); B -> C -> B is a
+    dangling loop hanging off the destination station. Mirrors a real bug:
+    Reutlingen -> Stuttgart (direct) -> Heidelberg -> Stuttgart was surfaced
+    as a bogus 2-transfer "route" that leaves the destination and comes
+    back to it, instead of the search stopping once it arrives. All legs
+    run on WD so the calendar isn't what's under test here."""
+    stations = [
+        Station(station_id="A", name="Station A"),
+        Station(station_id="B", name="Station B"),
+        Station(station_id="C", name="Station C"),
+    ]
+    lines = [
+        Line(line_id="X", type="ICE", operator="DB Fernverkehr"),
+        Line(line_id="Y", type="RE", operator="DB Regio"),
+    ]
+    trips = [
+        TripRecord(trip_id="T_A_B", line_id="X", service_id="WD"),
+        TripRecord(trip_id="T_B_C", line_id="Y", service_id="WD"),
+        TripRecord(trip_id="T_C_B", line_id="Y", service_id="WD"),
+    ]
+    leg_templates = [
+        LegTemplate(
+            leg_id="L_A_B", trip_id="T_A_B", line_id="X", sequence_index=0,
+            origin_station_id="A", destination_station_id="B",
+            departure_seconds=7 * 3600, arrival_seconds=7 * 3600 + 30 * 60,
+        ),
+        LegTemplate(
+            leg_id="L_B_C", trip_id="T_B_C", line_id="Y", sequence_index=0,
+            origin_station_id="B", destination_station_id="C",
+            departure_seconds=8 * 3600, arrival_seconds=8 * 3600 + 30 * 60,
+        ),
+        LegTemplate(
+            leg_id="L_C_B", trip_id="T_C_B", line_id="Y", sequence_index=0,
+            origin_station_id="C", destination_station_id="B",
+            departure_seconds=9 * 3600, arrival_seconds=9 * 3600 + 30 * 60,
+        ),
+    ]
+    transfer_templates = [
+        TransferTemplate(
+            transfer_id="TR_AB_BC", station_id="B", from_leg_id="L_A_B", to_leg_id="L_B_C",
+            from_trip_id="T_A_B", to_trip_id="T_B_C", buffer_minutes=30,
+        ),
+        TransferTemplate(
+            transfer_id="TR_BC_CB", station_id="C", from_leg_id="L_B_C", to_leg_id="L_C_B",
+            from_trip_id="T_B_C", to_trip_id="T_C_B", buffer_minutes=30,
+        ),
+    ]
+    calendar_rows = [_weekday_calendar("WD")]
+    distributions = {"X": {"0": 1.0}, "Y": {"0": 1.0}}
+
+    write_warehouse(
+        conn, stations, lines, trips, leg_templates, transfer_templates,
+        calendar_rows, [], distributions,
+    )
+    return conn
+
+
+def test_does_not_produce_a_cycle_through_the_destination(overshoot_warehouse):
+    """A -> B must return exactly the direct route -- not also the bogus
+    2-transfer A -> B -> C -> B "overshoot" that leaves the destination
+    station and comes back to it."""
+    legs_by_id, transfers_by_id = {}, {}
+    routes = find_candidate_routes(
+        overshoot_warehouse, "A", "B", EARLY, MONDAY, legs_by_id, transfers_by_id
+    )
+    assert [r.route_id for r in routes] == ["RS_DIRECT_L_A_B"]
+
+
+def test_no_returned_route_revisits_a_station(overshoot_warehouse):
+    """General invariant: every candidate route's station sequence (origin,
+    each transfer station, destination) must have no duplicates -- every
+    route is a simple path, never a cycle."""
+    legs_by_id, transfers_by_id = {}, {}
+    routes = find_candidate_routes(
+        overshoot_warehouse, "A", "B", EARLY, MONDAY, legs_by_id, transfers_by_id
+    )
+    assert routes  # sanity check the fixture actually exercises the search
+    for route in routes:
+        legs = [legs_by_id[leg_id] for leg_id in route.legs]
+        stations = [legs[0].origin_station_id] + [leg.destination_station_id for leg in legs]
+        assert len(stations) == len(set(stations)), f"{route.route_id} revisits a station: {stations}"

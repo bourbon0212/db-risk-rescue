@@ -61,7 +61,13 @@ def find_candidate_routes(
     ]
 
     for leg_a in origin_legs:
-        if leg_a.destination_station_id == destination_id:
+        station_1 = leg_a.destination_station_id
+        if station_1 == origin_id:
+            # A leg that loops back to the origin makes no progress --
+            # not a journey anyone wants surfaced as a candidate route.
+            continue
+
+        if station_1 == destination_id:
             routes.append(
                 Route(
                     route_id=f"RS_DIRECT_{leg_a.leg_id}",
@@ -73,13 +79,29 @@ def find_candidate_routes(
                     scheduled_arrival=leg_a.scheduled_arrival,
                 )
             )
+            # Already at the destination: any further transfer from here
+            # could only leave and eventually come back to it (destination_id
+            # is the one station every route must end at), which is a cycle
+            # through the destination rather than a distinct route. Nothing
+            # past this point can be legitimate, so stop extending leg_a.
+            continue
+
+        # Stations visited so far on this path -- any leg landing back on
+        # one of these would be a cycle (SPEC.md §3, route search has no
+        # concept of a "scenic route"; every candidate must be a simple path).
+        visited = {origin_id, station_1}
 
         for transfer_1 in transfers_by_from_leg.get(leg_a.leg_id, []):
             leg_b = legs_by_id.get(transfer_1.to_leg_id)
             if leg_b is None:
                 continue
 
-            if leg_b.destination_station_id == destination_id:
+            station_2 = leg_b.destination_station_id
+            if station_2 in visited:
+                # Revisits the origin or leg_a's arrival station: a cycle.
+                continue
+
+            if station_2 == destination_id:
                 routes.append(
                     Route(
                         route_id=f"RS_XFER1_{transfer_1.transfer_id}",
@@ -91,10 +113,9 @@ def find_candidate_routes(
                         scheduled_arrival=leg_b.scheduled_arrival,
                     )
                 )
-
-            # A second transfer that lands back at the origin isn't a
-            # journey anyone wants surfaced as a candidate route.
-            if leg_b.destination_station_id == origin_id:
+                # Same reasoning as the direct-route case above: already
+                # arrived, so stop extending leg_b instead of exploring a
+                # second transfer that could only cycle back through it.
                 continue
 
             for transfer_2 in transfers_by_from_leg.get(leg_b.leg_id, []):

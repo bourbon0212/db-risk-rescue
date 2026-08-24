@@ -255,3 +255,90 @@ def test_route_ids_are_unique(synthetic_dataset):
     routes = find_candidate_routes(synthetic_dataset, "A", "C", EARLY)
     route_ids = [r.route_id for r in routes]
     assert len(route_ids) == len(set(route_ids))
+
+
+# --- no cycles / no overshooting the destination ----------------------------
+
+
+@pytest.fixture
+def overshoot_dataset() -> MockDataset:
+    """A -> B directly reaches the destination (B); B -> C -> B is a
+    dangling loop hanging off the destination station. Mirrors a real bug:
+    Reutlingen -> Stuttgart (direct) -> Heidelberg -> Stuttgart was surfaced
+    as a bogus 2-transfer "route" that leaves the destination and comes
+    back to it, instead of the search stopping once it arrives."""
+    return MockDataset(
+        stations=[
+            Station(station_id="A", name="Station A"),
+            Station(station_id="B", name="Station B"),
+            Station(station_id="C", name="Station C"),
+        ],
+        lines=[],
+        legs=[
+            Leg(
+                leg_id="L_A_B",
+                line_id="X",
+                origin_station_id="A",
+                destination_station_id="B",
+                scheduled_departure=datetime(2026, 8, 23, 7, 0),
+                scheduled_arrival=datetime(2026, 8, 23, 7, 30),
+                delay_distribution_minutes={"0": 1.0},
+            ),
+            Leg(
+                leg_id="L_B_C",
+                line_id="Y",
+                origin_station_id="B",
+                destination_station_id="C",
+                scheduled_departure=datetime(2026, 8, 23, 8, 0),
+                scheduled_arrival=datetime(2026, 8, 23, 8, 30),
+                delay_distribution_minutes={"0": 1.0},
+            ),
+            Leg(
+                leg_id="L_C_B",
+                line_id="Y",
+                origin_station_id="C",
+                destination_station_id="B",
+                scheduled_departure=datetime(2026, 8, 23, 9, 0),
+                scheduled_arrival=datetime(2026, 8, 23, 9, 30),
+                delay_distribution_minutes={"0": 1.0},
+            ),
+        ],
+        transfers=[
+            Transfer(
+                transfer_id="TR_AB_BC",
+                station_id="B",
+                from_leg_id="L_A_B",
+                to_leg_id="L_B_C",
+                scheduled_buffer_minutes=30,
+            ),
+            Transfer(
+                transfer_id="TR_BC_CB",
+                station_id="C",
+                from_leg_id="L_B_C",
+                to_leg_id="L_C_B",
+                scheduled_buffer_minutes=30,
+            ),
+        ],
+        routes=[],
+    )
+
+
+def test_does_not_produce_a_cycle_through_the_destination(overshoot_dataset):
+    """A -> B must return exactly the direct route -- not also the bogus
+    2-transfer A -> B -> C -> B "overshoot" that leaves the destination
+    station and comes back to it."""
+    routes = find_candidate_routes(overshoot_dataset, "A", "B", EARLY)
+    assert [r.route_id for r in routes] == ["RS_DIRECT_L_A_B"]
+
+
+def test_no_returned_route_revisits_a_station(overshoot_dataset):
+    """General invariant: every candidate route's station sequence (origin,
+    each transfer station, destination) must have no duplicates -- every
+    route is a simple path, never a cycle."""
+    legs_by_id = {leg.leg_id: leg for leg in overshoot_dataset.legs}
+    routes = find_candidate_routes(overshoot_dataset, "A", "B", EARLY)
+    assert routes  # sanity check the fixture actually exercises the search
+    for route in routes:
+        legs = [legs_by_id[leg_id] for leg_id in route.legs]
+        stations = [legs[0].origin_station_id] + [leg.destination_station_id for leg in legs]
+        assert len(stations) == len(set(stations)), f"{route.route_id} revisits a station: {stations}"

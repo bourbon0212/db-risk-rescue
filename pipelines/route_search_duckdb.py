@@ -142,7 +142,13 @@ def find_candidate_routes(
         leg_a = _materialize_leg(origin_row, service_date, distributions)
         legs_by_id[leg_a.leg_id] = leg_a
 
-        if leg_a.destination_station_id == destination_id:
+        station_1 = leg_a.destination_station_id
+        if station_1 == origin_id:
+            # A leg that loops back to the origin makes no progress --
+            # not a journey anyone wants surfaced as a candidate route.
+            continue
+
+        if station_1 == destination_id:
             routes.append(
                 Route(
                     route_id=f"RS_DIRECT_{leg_a.leg_id}",
@@ -154,10 +160,26 @@ def find_candidate_routes(
                     scheduled_arrival=leg_a.scheduled_arrival,
                 )
             )
+            # Already at the destination: any further transfer from here
+            # could only leave and eventually come back to it -- a cycle
+            # through the destination rather than a distinct route. Nothing
+            # past this point can be legitimate, so stop extending leg_a
+            # (and skip the transfer_1 query entirely).
+            continue
+
+        # Stations visited so far on this path -- any leg landing back on
+        # one of these would be a cycle; every candidate must be a simple path.
+        visited = {origin_id, station_1}
 
         transfer_1_rows = conn.execute(_TRANSFERS_FROM_LEG_SQL, [leg_a.leg_id]).fetchall()
         for t1_transfer_id, t1_station_id, t1_buffer, *leg_b_row in transfer_1_rows:
             leg_b = _materialize_leg(tuple(leg_b_row), service_date, distributions)
+
+            station_2 = leg_b.destination_station_id
+            if station_2 in visited:
+                # Revisits the origin or leg_a's arrival station: a cycle.
+                continue
+
             legs_by_id[leg_b.leg_id] = leg_b
             transfer_1 = Transfer(
                 transfer_id=t1_transfer_id,
@@ -168,7 +190,7 @@ def find_candidate_routes(
             )
             transfers_by_id[transfer_1.transfer_id] = transfer_1
 
-            if leg_b.destination_station_id == destination_id:
+            if station_2 == destination_id:
                 routes.append(
                     Route(
                         route_id=f"RS_XFER1_{transfer_1.transfer_id}",
@@ -180,10 +202,10 @@ def find_candidate_routes(
                         scheduled_arrival=leg_b.scheduled_arrival,
                     )
                 )
-
-            # A second transfer that lands back at the origin isn't a
-            # journey anyone wants surfaced as a candidate route.
-            if leg_b.destination_station_id == origin_id:
+                # Same reasoning as the direct-route case above: already
+                # arrived, so stop extending leg_b (skip the transfer_2
+                # query) instead of exploring a second transfer that could
+                # only cycle back through the destination.
                 continue
 
             transfer_2_rows = conn.execute(_TRANSFERS_FROM_LEG_SQL, [leg_b.leg_id]).fetchall()
