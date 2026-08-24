@@ -1,6 +1,7 @@
 """DB Risk & Rescue — Streamlit dashboard (SPEC.md Section 4)."""
 
 import random
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -74,102 +75,106 @@ def get_warehouse_connection() -> duckdb.DuckDBPyConnection:
     return db.get_connection(read_only=True)
 
 
-@st.cache_data(show_spinner="Searching the timetable and running simulation...")
-def search_and_simulate(
+@st.cache_data(show_spinner="Searching the timetable...")
+def search_routes(
+    path: Path, origin_id: str, destination_id: str, departure_time: datetime
+) -> list[Route]:
+    """Route search only -- no simulation. Cached independently of
+    display_limit (unlike the old combined search_and_simulate) so a "Load
+    more" click never re-runs the search, and kept separate from simulation
+    so simulate_one_route (below) can cache per-route instead of per-batch."""
+    dataset = get_dataset(path)
+    return find_candidate_routes(dataset, origin_id, destination_id, departure_time)
+
+
+@st.cache_data(show_spinner=False)
+def simulate_one_route(
     path: Path,
-    origin_id: str,
-    destination_id: str,
-    departure_time: datetime,
+    route_id: str,
     n_iterations: int,
     seed: int,
-    limit: int,
-) -> tuple[list[Route], dict[str, RouteSimulationResult], int]:
-    """Runs the (cheap) route search in full, then simulates only the first
-    `limit` routes -- the "Load More" pagination pattern (SPEC.md §5.1):
-    Monte Carlo simulation is the expensive part, so slicing before the
-    simulate loop is what actually saves work, not just display. Returns the
-    unsliced total route count alongside the sliced routes/results so the
-    caller knows whether a "Load more" button is warranted."""
+    _route: Route,
+) -> RouteSimulationResult:
+    """Cached per route_id (+ dataset path/n_iterations/seed), not per
+    display_limit batch -- a "Load more" click that reveals routes 6-10 only
+    ever simulates those 5; routes 1-5 are cache hits, not re-simulated
+    alongside them. route_id already uniquely and deterministically
+    identifies a physical route within `path`'s dataset, so it alone (plus
+    the run parameters) is a sufficient, stable cache key -- `_route` is
+    passed only to avoid recomputing it, not for cache identity (leading
+    underscore = excluded from Streamlit's cache-key hash, see
+    https://docs.streamlit.io/develop/concepts/architecture/caching)."""
     dataset = get_dataset(path)
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
-    candidate_routes = find_candidate_routes(dataset, origin_id, destination_id, departure_time)
-    total_route_count = len(candidate_routes)
-    candidate_routes = candidate_routes[:limit]
-    results = {
-        route.route_id: simulate_route(
-            route, legs_by_id, transfers_by_id, lines_by_id,
-            n_iterations=n_iterations, rng=random.Random(seed),
-            fallback_plans=precompute_fallback_plans(route, dataset, legs_by_id, transfers_by_id),
-        )
-        for route in candidate_routes
-    }
-    return candidate_routes, results, total_route_count
+    fallback_plans = precompute_fallback_plans(_route, dataset, legs_by_id, transfers_by_id)
+    return simulate_route(
+        _route, legs_by_id, transfers_by_id, lines_by_id,
+        n_iterations=n_iterations, rng=random.Random(seed), fallback_plans=fallback_plans,
+    )
 
 
-@st.cache_data(show_spinner="Searching the timetable and running simulation...")
-def search_and_simulate_warehouse(
+@st.cache_data(show_spinner="Searching the timetable...")
+def search_routes_warehouse(
     _conn: duckdb.DuckDBPyConnection,
     origin_id: str,
     destination_id: str,
     departure_time: datetime,
     service_date: date,
-    n_iterations: int,
-    seed: int,
-    limit: int,
-) -> tuple[
-    list[Route],
-    dict[str, RouteSimulationResult],
-    dict[str, Leg],
-    dict[str, Transfer],
-    dict[str, Line],
-    int,
-]:
-    """SPEC.md §4.3 — Phase 3 counterpart to search_and_simulate(), sourced
-    from the DuckDB warehouse and scoped to service_date. legs_by_id/
-    transfers_by_id start empty and are grown in place by every
-    route_search_duckdb call this makes (the top-level search plus one
-    fallback search per transfer node) -- unlike the JSON path, there's no
-    whole-dataset index_dataset() call, so only whatever this search
-    actually touches ever ends up in memory (SPEC.md §3.5).
+) -> tuple[list[Route], dict[str, Leg], dict[str, Transfer]]:
+    """SPEC.md §4.3 — Phase 3 counterpart to search_routes(). legs_by_id/
+    transfers_by_id start empty and are grown in place by find_candidate_routes
+    (SPEC.md §3.5) -- returned so simulate_one_route_warehouse can resolve
+    each route's own legs/transfers without a whole-dataset load. Cached
+    independently of display_limit, same reasoning as search_routes()."""
+    legs_by_id: dict[str, Leg] = {}
+    transfers_by_id: dict[str, Transfer] = {}
+    candidate_routes = route_search_duckdb.find_candidate_routes(
+        _conn, origin_id, destination_id, departure_time, service_date, legs_by_id, transfers_by_id
+    )
+    return candidate_routes, legs_by_id, transfers_by_id
 
-    Simulation is sliced to the first `limit` routes -- the "Load More"
-    pagination pattern (SPEC.md §5.1) -- since Monte Carlo simulation, not
-    the route search itself, is the expensive part. Returns the unsliced
-    total route count alongside the sliced routes/results so the caller
-    knows whether a "Load more" button is warranted.
-    """
+
+@st.cache_data(show_spinner=False)
+def get_lines_warehouse(_conn: duckdb.DuckDBPyConnection) -> dict[str, Line]:
     # lines table is small/static (SPEC.md §4.3) -- eager-loading all of it
     # needs no per-search scoping, unlike legs/transfers.
-    lines_by_id = {
+    return {
         row[0]: Line(line_id=row[0], type=row[1], operator=row[2])
         for row in _conn.execute("SELECT line_id, type, operator FROM lines").fetchall()
     }
 
-    legs_by_id: dict[str, Leg] = {}
-    transfers_by_id: dict[str, Transfer] = {}
 
-    candidate_routes = route_search_duckdb.find_candidate_routes(
-        _conn, origin_id, destination_id, departure_time, service_date, legs_by_id, transfers_by_id
-    )
-    total_route_count = len(candidate_routes)
-    candidate_routes = candidate_routes[:limit]
-
+@st.cache_data(show_spinner=False)
+def simulate_one_route_warehouse(
+    route_id: str,
+    service_date: date,
+    n_iterations: int,
+    seed: int,
+    _conn: duckdb.DuckDBPyConnection,
+    _route: Route,
+    _legs_by_id: dict[str, Leg],
+    _transfers_by_id: dict[str, Transfer],
+    _lines_by_id: dict[str, Line],
+) -> RouteSimulationResult:
+    """Warehouse-path sibling of simulate_one_route() -- same per-route cache
+    key reasoning (route_id is a stable, globally-unique identifier of a
+    physical route derived from its underlying trip-based leg ids, so it's
+    deterministic and safe to key on directly). service_date is included in
+    the key because, unlike the JSON path's single baked-in date, a fallback
+    search's results genuinely depend on which calendar day it's run for.
+    """
     def route_search_fn(o: str, d: str, t: datetime) -> list[Route]:
         return route_search_duckdb.find_candidate_routes(
-            _conn, o, d, t, service_date, legs_by_id, transfers_by_id
+            _conn, o, d, t, service_date, _legs_by_id, _transfers_by_id
         )
 
-    results = {
-        route.route_id: simulate_route(
-            route, legs_by_id, transfers_by_id, lines_by_id,
-            n_iterations=n_iterations, rng=random.Random(seed),
-            fallback_plans=precompute_fallback_plans(
-                route, None, legs_by_id, transfers_by_id, route_search_fn=route_search_fn
-            ),
-        )
-        for route in candidate_routes
-    }
-    return candidate_routes, results, legs_by_id, transfers_by_id, lines_by_id, total_route_count
+    fallback_plans = precompute_fallback_plans(
+        _route, None, _legs_by_id, _transfers_by_id, route_search_fn=route_search_fn
+    )
+    return simulate_route(
+        _route, _legs_by_id, _transfers_by_id, _lines_by_id,
+        n_iterations=n_iterations, rng=random.Random(seed), fallback_plans=fallback_plans,
+    )
 
 
 DISPLAY_LIMIT_STEP = 5
@@ -221,12 +226,34 @@ if use_warehouse:
     departure_datetime = datetime.combine(service_date, departure_time_of_day)
     _sync_display_limit((data_source_label, origin_id, destination_id, departure_datetime, service_date))
 
-    candidate_routes, results_by_route, legs_by_id, transfers_by_id, lines_by_id, total_route_count = (
-        search_and_simulate_warehouse(
-            conn, origin_id, destination_id, departure_datetime, service_date,
-            N_ITERATIONS, RNG_SEED, st.session_state.display_limit,
-        )
+    t_search0 = time.perf_counter()
+    candidate_routes, legs_by_id, transfers_by_id = search_routes_warehouse(
+        conn, origin_id, destination_id, departure_datetime, service_date
     )
+    lines_by_id = get_lines_warehouse(conn)
+    t_search1 = time.perf_counter()
+    print(
+        f"[timing] find_candidate_routes (warehouse): {t_search1 - t_search0:.3f}s, "
+        f"{len(candidate_routes)} candidates"
+    )
+
+    total_route_count = len(candidate_routes)
+    sliced_routes = candidate_routes[: st.session_state.display_limit]
+
+    t_sim0 = time.perf_counter()
+    results_by_route = {
+        route.route_id: simulate_one_route_warehouse(
+            route.route_id, service_date, N_ITERATIONS, RNG_SEED,
+            conn, route, legs_by_id, transfers_by_id, lines_by_id,
+        )
+        for route in sliced_routes
+    }
+    t_sim1 = time.perf_counter()
+    print(
+        f"[timing] simulate+fallback for {len(sliced_routes)} routes (warehouse): "
+        f"{t_sim1 - t_sim0:.3f}s"
+    )
+    candidate_routes = sliced_routes
 else:
     dataset = get_dataset(data_source_path)
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
@@ -253,10 +280,30 @@ else:
     )
     _sync_display_limit((data_source_label, origin_id, destination_id, departure_datetime, None))
 
-    candidate_routes, results_by_route, total_route_count = search_and_simulate(
-        data_source_path, origin_id, destination_id, departure_datetime,
-        N_ITERATIONS, RNG_SEED, st.session_state.display_limit,
+    t_search0 = time.perf_counter()
+    candidate_routes = search_routes(data_source_path, origin_id, destination_id, departure_datetime)
+    t_search1 = time.perf_counter()
+    print(
+        f"[timing] find_candidate_routes (json): {t_search1 - t_search0:.3f}s, "
+        f"{len(candidate_routes)} candidates"
     )
+
+    total_route_count = len(candidate_routes)
+    sliced_routes = candidate_routes[: st.session_state.display_limit]
+
+    t_sim0 = time.perf_counter()
+    results_by_route = {
+        route.route_id: simulate_one_route(
+            data_source_path, route.route_id, N_ITERATIONS, RNG_SEED, route
+        )
+        for route in sliced_routes
+    }
+    t_sim1 = time.perf_counter()
+    print(
+        f"[timing] simulate+fallback for {len(sliced_routes)} routes (json): "
+        f"{t_sim1 - t_sim0:.3f}s"
+    )
+    candidate_routes = sliced_routes
 
 if not candidate_routes:
     st.info(

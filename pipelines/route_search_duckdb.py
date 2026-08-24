@@ -18,6 +18,7 @@ however many searches (the top-level search plus each transfer's fallback
 search) happened during one app.py request.
 """
 
+from collections import defaultdict
 from datetime import date, datetime, time
 
 import duckdb
@@ -57,15 +58,15 @@ WHERE lt.origin_station_id = ?
 ORDER BY lt.departure_seconds
 """
 
-_TRANSFERS_FROM_LEG_SQL = """
-SELECT tt.transfer_id, tt.station_id, tt.buffer_minutes,
+_TRANSFERS_FROM_LEGS_SQL = """
+SELECT tt.from_leg_id, tt.transfer_id, tt.station_id, tt.buffer_minutes,
        lt.leg_id, lt.line_id, lt.origin_station_id, lt.destination_station_id,
        lt.departure_seconds, lt.arrival_seconds
 FROM transfer_templates tt
 JOIN trips t_from ON t_from.trip_id = tt.from_trip_id
 JOIN trips t_to ON t_to.trip_id = tt.to_trip_id
 JOIN leg_templates lt ON lt.leg_id = tt.to_leg_id
-WHERE tt.from_leg_id = ?
+WHERE tt.from_leg_id = ANY(?)
   AND t_from.service_id IN (SELECT service_id FROM _active_service_ids)
   AND t_to.service_id IN (SELECT service_id FROM _active_service_ids)
 """
@@ -86,6 +87,24 @@ class _DistributionCache:
     def __init__(self, conn: duckdb.DuckDBPyConnection) -> None:
         self._conn = conn
         self._cache: dict[str, dict[str, float]] = {}
+
+    def preload(self, line_ids: set[str]) -> None:
+        """Batch-fetches every line_id not already cached in ONE query,
+        instead of paying a separate query per distinct line the first time
+        each is seen -- same one-query-per-item pattern this module's leg/
+        transfer lookups were fixed to avoid (see find_candidate_routes)."""
+        missing = [line_id for line_id in line_ids if line_id not in self._cache]
+        if not missing:
+            return
+        grouped: dict[str, dict[str, float]] = defaultdict(dict)
+        rows = self._conn.execute(
+            "SELECT line_id, bucket_minutes, probability FROM delay_distributions WHERE line_id = ANY(?)",
+            [missing],
+        ).fetchall()
+        for line_id, bucket, probability in rows:
+            grouped[line_id][str(bucket)] = probability
+        for line_id in missing:
+            self._cache[line_id] = grouped.get(line_id, {})
 
     def get(self, line_id: str) -> dict[str, float]:
         if line_id not in self._cache:
@@ -126,6 +145,15 @@ def find_candidate_routes(
     legs_by_id/transfers_by_id are mutated in place with every Leg/Transfer
     object this call resolves, so engine.py can look any of them up by id
     afterward exactly as it does for the Phase 1/2 in-memory dataset.
+
+    Each hop's transfer candidates -- and each hop's delay_distributions
+    lookups (`_DistributionCache.preload`) -- are fetched with ONE batched
+    query across every leg/line still in play (`= ANY(?)`) rather than one
+    query per leg or per line. An earlier per-item-per-query version measured
+    584 individual round trips for a single well-connected search (~5s of
+    pure Python<->DuckDB call overhead, not query cost: the filtered columns
+    are already indexed). Batching turns that into at most 6 queries total
+    per call regardless of how richly connected the graph is.
     """
     if origin_id == destination_id:
         return []
@@ -138,6 +166,12 @@ def find_candidate_routes(
     routes: list[Route] = []
 
     origin_rows = conn.execute(_ORIGIN_LEGS_SQL, [origin_id, cutoff_seconds]).fetchall()
+    distributions.preload({row[1] for row in origin_rows})
+
+    # leg_a_id -> (leg_a, stations visited by the time leg_a lands) for every
+    # first-hop leg that neither loops back to the origin nor already
+    # reaches the destination (both handled inline, below).
+    continuing_leg_a: dict[str, tuple[Leg, set[str]]] = {}
     for origin_row in origin_rows:
         leg_a = _materialize_leg(origin_row, service_date, distributions)
         legs_by_id[leg_a.leg_id] = leg_a
@@ -164,15 +198,31 @@ def find_candidate_routes(
             # could only leave and eventually come back to it -- a cycle
             # through the destination rather than a distinct route. Nothing
             # past this point can be legitimate, so stop extending leg_a
-            # (and skip the transfer_1 query entirely).
+            # (and skip the transfer_1 lookup entirely).
             continue
 
         # Stations visited so far on this path -- any leg landing back on
         # one of these would be a cycle; every candidate must be a simple path.
-        visited = {origin_id, station_1}
+        continuing_leg_a[leg_a.leg_id] = (leg_a, {origin_id, station_1})
 
-        transfer_1_rows = conn.execute(_TRANSFERS_FROM_LEG_SQL, [leg_a.leg_id]).fetchall()
-        for t1_transfer_id, t1_station_id, t1_buffer, *leg_b_row in transfer_1_rows:
+    if not continuing_leg_a:
+        routes.sort(key=lambda r: r.scheduled_departure)
+        return routes
+
+    transfer_1_rows = conn.execute(_TRANSFERS_FROM_LEGS_SQL, [list(continuing_leg_a)]).fetchall()
+    distributions.preload({row[5] for row in transfer_1_rows})
+    transfer_1_by_leg_a: dict[str, list[tuple]] = defaultdict(list)
+    for row in transfer_1_rows:
+        transfer_1_by_leg_a[row[0]].append(row[1:])
+
+    # (leg_a_id, transfer_1, leg_b) for every pairing that neither cycles nor
+    # already reaches the destination (also handled inline) -- these are
+    # what still need a transfer_2 lookup, batched the same way below.
+    continuing_paths: list[tuple[str, Transfer, Leg]] = []
+    leg_b_ids_needed: set[str] = set()
+
+    for leg_a_id, (leg_a, visited) in continuing_leg_a.items():
+        for t1_transfer_id, t1_station_id, t1_buffer, *leg_b_row in transfer_1_by_leg_a.get(leg_a_id, []):
             leg_b = _materialize_leg(tuple(leg_b_row), service_date, distributions)
 
             station_2 = leg_b.destination_station_id
@@ -184,7 +234,7 @@ def find_candidate_routes(
             transfer_1 = Transfer(
                 transfer_id=t1_transfer_id,
                 station_id=t1_station_id,
-                from_leg_id=leg_a.leg_id,
+                from_leg_id=leg_a_id,
                 to_leg_id=leg_b.leg_id,
                 scheduled_buffer_minutes=t1_buffer,
             )
@@ -194,7 +244,7 @@ def find_candidate_routes(
                 routes.append(
                     Route(
                         route_id=f"RS_XFER1_{transfer_1.transfer_id}",
-                        legs=[leg_a.leg_id, leg_b.leg_id],
+                        legs=[leg_a_id, leg_b.leg_id],
                         transfers=[transfer_1.transfer_id],
                         origin_station_id=origin_id,
                         destination_station_id=destination_id,
@@ -204,12 +254,23 @@ def find_candidate_routes(
                 )
                 # Same reasoning as the direct-route case above: already
                 # arrived, so stop extending leg_b (skip the transfer_2
-                # query) instead of exploring a second transfer that could
+                # lookup) instead of exploring a second transfer that could
                 # only cycle back through the destination.
                 continue
 
-            transfer_2_rows = conn.execute(_TRANSFERS_FROM_LEG_SQL, [leg_b.leg_id]).fetchall()
-            for t2_transfer_id, t2_station_id, t2_buffer, *leg_c_row in transfer_2_rows:
+            continuing_paths.append((leg_a_id, transfer_1, leg_b))
+            leg_b_ids_needed.add(leg_b.leg_id)
+
+    if continuing_paths:
+        transfer_2_rows = conn.execute(_TRANSFERS_FROM_LEGS_SQL, [list(leg_b_ids_needed)]).fetchall()
+        distributions.preload({row[5] for row in transfer_2_rows})
+        transfer_2_by_leg_b: dict[str, list[tuple]] = defaultdict(list)
+        for row in transfer_2_rows:
+            transfer_2_by_leg_b[row[0]].append(row[1:])
+
+        for leg_a_id, transfer_1, leg_b in continuing_paths:
+            leg_a = continuing_leg_a[leg_a_id][0]
+            for t2_transfer_id, t2_station_id, t2_buffer, *leg_c_row in transfer_2_by_leg_b.get(leg_b.leg_id, []):
                 leg_c = _materialize_leg(tuple(leg_c_row), service_date, distributions)
                 if leg_c.destination_station_id != destination_id:
                     continue
@@ -225,7 +286,7 @@ def find_candidate_routes(
                 routes.append(
                     Route(
                         route_id=f"RS_XFER2_{transfer_1.transfer_id}_{transfer_2.transfer_id}",
-                        legs=[leg_a.leg_id, leg_b.leg_id, leg_c.leg_id],
+                        legs=[leg_a_id, leg_b.leg_id, leg_c.leg_id],
                         transfers=[transfer_1.transfer_id, transfer_2.transfer_id],
                         origin_station_id=origin_id,
                         destination_station_id=destination_id,
