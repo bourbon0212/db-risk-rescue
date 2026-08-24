@@ -167,6 +167,8 @@ Scope boundary: this is one level of re-routing. If a transfer *within* a fallba
 - `simulate_route`'s per-iteration sampling never touches a database — it consumes plain in-memory `Leg`/`Transfer` objects assembled once per search (§4.1).
 - Verified end-to-end by `test_route_search_duckdb.py`'s integration test, which drives `precompute_fallback_plans` + `simulate_route` against a DuckDB-backed `route_search_fn` and checks the same outputs the in-memory path produces.
 
+For the JSON backend specifically, `precompute_fallback_plans` also accepts an optional `search_indexes` — a `pipelines.route_search.build_route_search_indexes(dataset)` result (`legs_by_id`/`transfers_by_from_leg`) — passed straight through to its default `find_candidate_routes` call. Without it, every fallback sub-search rebuilt both lookup tables from scratch over the full dataset; a 5-route batch with 2 transfers each did that ~11 times over `real_dataset.json`'s ~6,000 legs / ~69,000 transfers. `app.py` builds these indexes once per search batch (`get_search_indexes`, cached per dataset path) and reuses them for the top-level search and every fallback sub-search — an O(1)-per-call-count optimization same as the batching above, just for the JSON path's index cost instead of the DuckDB path's query count.
+
 ## 4. Storage & Data Access Architecture
 
 Three interchangeable backends produce the §2 contract; `app.py`'s sidebar picks between them. Full schema and pipeline detail: `DATA_SPEC.md`.
@@ -192,11 +194,26 @@ Both validate directly against `MockDataset` (§2) and are read with the same `l
 
 The UI date picker (§5.1) is bounded to `route_search_duckdb.calendar_window()`'s min/max. Full table schema: `DATA_SPEC.md` §6.
 
+### 4.4 Streamlit Caching Strategy
+
+Route search and Monte Carlo simulation are cached as **two separate stages**, not one combined unit — `search_routes`/`search_routes_warehouse` (route search only) and `simulate_one_route`/`simulate_one_route_warehouse` (simulation for exactly one route). Both are `@st.cache_data`.
+
+This split exists because the original combined cache (`search_and_simulate`/`search_and_simulate_warehouse`) was keyed on `display_limit` (§5.1's pagination window), so every "Load more" click changed the cache key and re-simulated the **entire growing prefix** — revealing routes 6–10 re-ran the simulation for routes 1–5 as well. Splitting the cache means:
+
+- `search_routes*` has no `display_limit` param at all, so the search itself is never re-run by a "Load more" click.
+- `simulate_one_route*` is keyed on `route_id` (plus `n_iterations`/`seed`/the dataset path, or `service_date` for the warehouse path — a fallback sub-search's results genuinely depend on which calendar day it runs for). `route_id` is a stable, deterministic identifier for a given search's route, derived from its underlying leg/transfer ids, so it alone is a sufficient cache key on its own; a "Load more" click that reveals routes 6–10 only ever computes those 5 — routes 1–5 are pure cache hits, not re-simulated alongside them.
+- `Route`/index-tuple arguments that aren't part of the cache identity (`_route`, `_search_indexes`, `_legs_by_id`, etc.) are passed with a leading underscore so Streamlit excludes them from the cache-key hash — they're there to avoid recomputing values already in hand, not to change what counts as a cache hit ([Streamlit caching docs](https://docs.streamlit.io/develop/concepts/architecture/caching)).
+- `app.py` wraps both stages in `time.perf_counter()` and prints the elapsed time to the terminal, so a future regression in either stage is visible without re-profiling by hand.
+
+Measured end-to-end (warehouse backend, real corridor data): ~1.3s to reach 20 loaded routes, then ~0.9s per further "Load more" click — a flat per-click cost, not a growing total.
+
 ## 5. Streamlit UI Specifications
 
 ### 5.1 Input Flow
 
-Minimal-friction search: user selects **origin, destination, and departure time**; the DuckDB backend (§4.3) additionally exposes a **service date** field, constrained to the GTFS feed's ingested calendar window. The app auto-generates candidate routes from whichever backend is selected and immediately runs the Monte Carlo simulation with default parameters (N = 1,000 iterations) — no advanced/simulation-tuning panel.
+Minimal-friction search: user selects **origin, destination, and departure time**; the DuckDB backend (§4.3) additionally exposes a **service date** field, constrained to the GTFS feed's ingested calendar window. The app auto-generates candidate routes from whichever backend is selected and runs the Monte Carlo simulation with default parameters (N = 1,000 iterations) — no advanced/simulation-tuning panel.
+
+Candidate routes are paginated via a `display_limit` session-state counter (`DISPLAY_LIMIT_STEP = 5`): the app simulates and shows only the first `display_limit` routes, with a "Load more" control that adds 5 more. `display_limit` resets to 5 whenever the search itself changes (origin, destination, departure time, or — warehouse backend — service date). Critically, routes are sliced to `display_limit` **before** the Monte Carlo loop runs, not just before rendering — simulation, not the route search, is the expensive part (§4.4), so slicing earlier is what actually saves the work rather than just hiding it. Sort/ranking within the results list operates only over the currently-loaded batch, not the full candidate pool, since ranking against not-yet-simulated routes would mean simulating them anyway and defeat pagination's purpose.
 
 ### 5.2 Route Comparison View
 
@@ -227,7 +244,17 @@ Replaced the hand-authored mock timetable with a real data pipeline: GTFS.DE sta
 
 Migrated the storage backend to a DuckDB warehouse of date-agnostic templates plus GTFS calendar data (§4.3), so route search and simulation can be scoped to **any date in the ingested calendar window** at query time instead of one date baked in at build time — while keeping the Monte Carlo hot loop and O(1) fallback-plan cache (§3.4–§3.5) untouched. Added the UI date picker (§5.1), a third selectable data source, and `requirements.txt` for reproducible installs. Confirmed against the real corridor: a full month (2026-08-22 .. 2026-09-21) ingests into a 9MB warehouse file, and different dates genuinely surface different route topologies (e.g. a Saturday-only direct Frankfurt–Köln service that doesn't exist on weekdays). Full detail: `DATA_SPEC.md` §6.
 
-### 6.4 What's next
+### 6.4 Post-Phase-3 hardening — corridor connectivity & query performance
+
+Real-feed testing against the Phase 3 warehouse surfaced a data-completeness bug and, once fixed, the performance issues it had been masking. Three fixes landed together:
+
+- **Corridor-aware leg construction** (`DATA_SPEC.md` §3.2): fixed a bug where any trip with a non-corridor stop between two corridor hubs — near-universal on long-distance runs — silently lost that connection instead of being modeled with an extra stop. Recovered ~1,000 previously-disconnected long-distance trips from the real feed without expanding the 33-station corridor whitelist (`DATA_SPEC.md` §9.1).
+- **N+1 query fix** (`DATA_SPEC.md` §6.3.1, §3.5 above): the richer graph the leg fix produced exposed a latent per-leg/per-line query pattern in `route_search_duckdb.find_candidate_routes`; batching to one query per hop cut a single search from 584 DuckDB round trips to 7, plus a matching index-reuse fix for the JSON backend (§3.5).
+- **Caching/pagination split** (§4.4, §5.1): replaced a single combined search+simulate cache keyed on the pagination window with separate route-search and per-route simulation caches, so "Load more" only ever pays for newly-revealed routes instead of re-simulating everything already loaded.
+
+Combined effect, measured against the real corridor: a Leipzig→Munich search that previously surfaced nothing before 09:27 now finds a 07:26 departure, and a full search + 5-route simulate went from ~30s to ~2.15s.
+
+### 6.5 What's next
 
 See §7 for the current Phase 4+ candidate list.
 

@@ -80,6 +80,14 @@ SERVICE_FREQUENCY_MINUTES = {"ICE": 60, "IC": 60, "RE": 60, "RB": 60, "S-Bahn": 
 
 If `gtfs_ingest.py` emits any other spelling (`"S"`, `"S-BAHN"`, `"Ice"`, GTFS's raw integer `route_type` codes, etc.), `get_headway_minutes()` raises `ValueError` at simulation time and the whole route blows up. `_normalize_line_type()` normalizes DB's GTFS route-type/route-short-name values to exactly these five strings, and both `build_dataset.py` and `build_warehouse.py`'s validation passes assert every emitted `Line.type` is a member of `gtfs_ingest.LINE_TYPES` before writing output — fail the build, don't let a bad line type reach `engine.py` at runtime.
 
+### 3.2 Corridor-aware leg construction (dropped long-distance connections)
+
+Step 5's original leg builder (`parse_legs`/`parse_leg_templates`) turns every *physically*-consecutive stop pair in a trip into one leg, then a later filter kept only legs where **both** endpoints were corridor stations (§9.1's 33-station "Golden 35" whitelist). That combination has a bug: any trip with a non-corridor stop between two corridor hubs — near-universal on long-distance ICE/IC runs, which routinely call at smaller stations outside the whitelisted set — produced a leg where neither endpoint was in-scope, and the post-hoc filter then discarded it entirely rather than modeling it as an extra stop. Measured against the real GTFS.DE feed, this silently dropped **84% of leg segments** and fully disconnected **~1,000 of ~4,200 long-distance trips** from the corridor graph — e.g. a Leipzig→Munich search surfaced nothing before 09:27 even though earlier ICE departures existed.
+
+The fix, `_walk_corridor_legs` plus its two format-specific wrappers `parse_corridor_legs(gtfs_dir, service_date, corridor_stop_ids) -> list[Leg]` and `parse_corridor_leg_templates(gtfs_dir, corridor_stop_ids) -> list[LegTemplate]` (`gtfs_ingest.py`), reduces each trip's `stop_sequence`-sorted stops down to just the ones touching a corridor station **first** (order preserved), then builds legs between *consecutive corridor stops* directly — skipping over non-corridor stops instead of being blocked by them. This is deliberately **not** a whitelist expansion: it changes which stop pairs become leg endpoints, not which stations are in-scope (§9.1's 33-station cap is unchanged), so the corridor's deliberate scope decision stays intact while the connectivity bug goes away.
+
+Wired into both `build_dataset.py` (JSON path) and `build_warehouse.py` (warehouse path), fully replacing the old post-hoc corridor-to-corridor filter — there are no callers left that produce legs the adjacency-only way and then filter them. Rebuilding both real outputs from the same GTFS.DE feed with this fix: `leg_templates` 6,620 → 12,372, trips ~3,205 → 7,348.
+
 ## 4. Delay Distribution Pipeline
 
 **Input:** Monthly Parquet files from the `piebro/deutsche-bahn-data` archive.
@@ -139,6 +147,12 @@ Store topology **date-agnostically** — one row per template leg/transfer regar
 4. Every resolved `Leg`/`Transfer` is written into the caller-supplied `legs_by_id`/`transfers_by_id` dicts as a side effect, so `engine.py`'s `simulate_route()`/`precompute_fallback_plans()` — which look objects up by id from those same dicts, completely unmodified — never need the whole network in memory, only whatever this and any prior calls in the same search actually touched (`SPEC.md` §3.5).
 
 `route_search_duckdb.calendar_window(conn)` returns `(MIN(start_date), MAX(end_date))` from `service_calendar`, used to bound `app.py`'s date picker (`SPEC.md` §5.1).
+
+### 6.3.1 Batched, not per-item, hop queries
+
+Steps 2–3 above issue **one query per hop** (`_ORIGIN_LEGS_SQL` once, then `_TRANSFERS_FROM_LEGS_SQL` once per transfer depth) across **every** leg still in play at that hop — via `= ANY(?)` over a list of leg ids — rather than one query per candidate leg. `_DistributionCache` mirrors this with a batched `preload(line_ids)` that fetches every not-yet-cached `line_id`'s `delay_distributions` rows in one query instead of one query per distinct line first encountered.
+
+This batching is load-bearing, not a micro-optimization: the corridor-aware leg fix (§3.2) grew `transfer_templates` to ~285K rows, which exposed a latent N+1 pattern the earlier, sparser graph had been masking. Profiled against the real warehouse, the per-item version issued **584 individual DuckDB round trips** for one Leipzig→Munich search (~5s of pure Python↔DuckDB call overhead — the filtered columns were already indexed, so this was query *count*, not query *cost*, and `engine.py`'s `precompute_fallback_plans` calling this search twice per route made a 5-route batch cost 30s+). Batching brings the same search down to **at most 6–7 queries total**, regardless of how richly connected the graph is: full search + 5-route simulate went from ~30s to ~2.15s, measured.
 
 ### 6.4 Build path
 
