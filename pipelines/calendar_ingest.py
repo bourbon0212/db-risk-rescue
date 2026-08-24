@@ -1,5 +1,5 @@
 """GTFS calendar.txt / calendar_dates.txt ingestion for Phase 3's dynamic
-calendar (SPEC.md §6.2).
+calendar (SPEC.md §4.3).
 
 Kept deliberately separate from gtfs_ingest.py's topology parsing: these two
 files are the only place "which date is this?" enters the pipeline, and

@@ -69,7 +69,7 @@ def precompute_fallback_plans(
     meaning simulate_route falls back to the static same-line-headway wait
     (§3.2 Step 4) for that node, unchanged.
 
-    `route_search_fn` (SPEC.md §6.3), if given, replaces the default
+    `route_search_fn` (SPEC.md §3.5), if given, replaces the default
     in-memory `find_candidate_routes(dataset, ...)` call with
     `route_search_fn(origin_id, destination_id, departure_time)` — this is
     how the Phase 3 DuckDB-backed path (pipelines/route_search_duckdb.py)

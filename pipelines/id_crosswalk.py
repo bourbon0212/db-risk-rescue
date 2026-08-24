@@ -3,7 +3,7 @@
 Per DATA_SPEC.md Section 2 (pipelines/id_crosswalk.py) and Section 8 step 4.
 
 Phase 2 v1 originally mirrored mock_data.json's 11-station corridor
-exactly (DATA_SPEC.md §7.1), with an explicit note to "expand coverage
+exactly (DATA_SPEC.md §9.1), with an explicit note to "expand coverage
 later once the pipeline is trusted." This is that expansion: a "Golden 35"
 -- in practice 30 -- station corridor covering the country's major ICE
 hubs and interchange points, so the network has real routing complexity
@@ -70,7 +70,7 @@ as its own station or multi-hop leg-building.
 """
 
 GTFS_STOP_ID_TO_STATION_ID: dict[str, str] = {
-    # --- original 11-station corridor (DATA_SPEC.md §7.1) ---
+    # --- original 11-station corridor (DATA_SPEC.md §9.1) ---
     "176697": "DE_FRA_HBF",  # Frankfurt (Main) Hauptbahnhof
     "335920": "DE_FRA_HBF",  # Frankfurt (Main) Hauptbahnhof tief (S-Bahn tunnel level)
     "517455": "DE_KOL_HBF",  # Koeln Hbf

@@ -20,7 +20,7 @@ import pandas as pd
 BUCKET_BOUNDARIES = [0, 5, 15, 30, 60]
 BUCKET_LABELS = [str(b) for b in BUCKET_BOUNDARIES]
 
-# DATA_SPEC.md §7.2 — proposed starting threshold.
+# DATA_SPEC.md §9.2 — resolved starting threshold.
 DEFAULT_MIN_SAMPLES = 30
 
 # DATA_SPEC.md §4 step 5 — fallback pools ICE+IC together, RE+RB together,

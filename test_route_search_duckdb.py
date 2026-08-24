@@ -1,4 +1,4 @@
-"""Tests for pipelines/route_search_duckdb.py (SPEC.md §6): the DuckDB-backed
+"""Tests for pipelines/route_search_duckdb.py (SPEC.md §4.3): the DuckDB-backed
 sibling of pipelines/route_search.py's find_candidate_routes, plus the
 dynamic-calendar-date filtering and legs_by_id/transfers_by_id mutation
 contract that lets engine.py's precompute_fallback_plans/simulate_route
@@ -212,7 +212,7 @@ def test_routes_are_sorted_by_departure(synthetic_warehouse):
     assert [r.scheduled_departure for r in routes] == sorted(r.scheduled_departure for r in routes)
 
 
-# --- legs_by_id/transfers_by_id mutation contract (SPEC.md §6.3) ------------
+# --- legs_by_id/transfers_by_id mutation contract (SPEC.md §3.5) ------------
 
 
 def test_mutates_legs_and_transfers_dicts_in_place(synthetic_warehouse):
@@ -249,7 +249,7 @@ def test_calendar_window_returns_min_and_max(synthetic_warehouse):
     assert window == (_CAL_START, _CAL_END)
 
 
-# --- end-to-end with engine.py (SPEC.md §6.3) --------------------------------
+# --- end-to-end with engine.py (SPEC.md §3.5) --------------------------------
 
 
 def test_precompute_fallback_plans_and_simulate_route_work_against_duckdb(synthetic_warehouse):

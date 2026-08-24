@@ -1,4 +1,4 @@
-"""Streamlit rendering helpers for the route comparison and detail views (SPEC.md §4)."""
+"""Streamlit rendering helpers for the route comparison and detail views (SPEC.md §5)."""
 
 from datetime import datetime
 
@@ -7,7 +7,7 @@ import streamlit as st
 from engine import RouteSimulationResult, TransferRisk
 from models import Leg, Route, Station, Transfer
 
-# SPEC.md §4.3 — thresholds to be tuned during prototyping.
+# SPEC.md §5.3 — thresholds to be tuned during prototyping.
 # "high" uses official DB Red for brand-consistent risk signaling.
 RISK_COLORS = {"low": "#2E7D32", "medium": "#F5A623", "high": "#EB0016"}
 
@@ -71,7 +71,7 @@ def render_route_card(
     stations_by_id: dict[str, Station],
     is_selected: bool = False,
 ) -> bool:
-    """Renders one route card per SPEC.md §4.2. Returns True if its Details button was clicked."""
+    """Renders one route card per SPEC.md §5.2. Returns True if its Details button was clicked."""
     origin = stations_by_id[route.origin_station_id].name
     destination = stations_by_id[route.destination_station_id].name
     duration = format_duration(route.scheduled_departure, route.scheduled_arrival)
@@ -120,7 +120,7 @@ def render_route_timeline(
     stations_by_id: dict[str, Station],
     transfer_risks: list[TransferRisk],
 ) -> None:
-    """Renders the leg → transfer → leg horizontal timeline per SPEC.md §4.3."""
+    """Renders the leg → transfer → leg horizontal timeline per SPEC.md §5.3."""
     ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
     risk_by_transfer_id = {r.transfer_id: r for r in transfer_risks}
 

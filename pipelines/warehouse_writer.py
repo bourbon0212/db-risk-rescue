@@ -1,4 +1,4 @@
-"""DDL + write logic for the Phase 3 DuckDB warehouse (SPEC.md §6.2).
+"""DDL + write logic for the Phase 3 DuckDB warehouse (SPEC.md §4.3).
 
 Table shapes mirror the schema agreed in the Phase 3 design plan: topology
 is stored date-agnostic (leg_templates/transfer_templates, seconds-since-

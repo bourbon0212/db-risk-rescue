@@ -1,4 +1,4 @@
-"""Phase 3 DuckDB-backed sibling of pipelines/route_search.py (SPEC.md §6.2).
+"""Phase 3 DuckDB-backed sibling of pipelines/route_search.py (SPEC.md §4.3).
 
 Same candidate-route algorithm and Route/Leg/Transfer contract as the
 Phase 1/2 in-memory find_candidate_routes() -- direct, single-transfer, and
@@ -218,7 +218,7 @@ def find_candidate_routes(
 
 def calendar_window(conn: duckdb.DuckDBPyConnection) -> tuple[date, date]:
     """Min/max date the ingested calendar.txt covers -- used to bound the
-    Streamlit date picker (SPEC.md §6.2 point 3). calendar_dates.txt
+    Streamlit date picker (SPEC.md §5.1). calendar_dates.txt
     exceptions are deliberately not consulted here; they add/remove services
     within roughly that range rather than meaningfully extending it (v1
     simplification, consistent with the rest of this module's scope)."""

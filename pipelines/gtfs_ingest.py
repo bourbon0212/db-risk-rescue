@@ -123,7 +123,7 @@ def parse_lines(gtfs_dir: Path) -> list[Line]:
 def _seconds_since_midnight(time_str: str) -> int:
     """Parse a GTFS HH:MM:SS time (hours may exceed 23 for post-midnight
     trips) into seconds since midnight of its nominal service day -- the
-    date-agnostic form Phase 3's leg_templates store (SPEC.md §6.2), shared
+    date-agnostic form Phase 3's leg_templates store (SPEC.md §4.3), shared
     with _parse_gtfs_time below so the anchored and template-based parsers
     can't drift apart on how they read the same column."""
     hours, minutes, seconds = (int(x) for x in time_str.strip().split(":"))
@@ -202,7 +202,7 @@ def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
 @dataclass(frozen=True)
 class TripRecord:
     """One GTFS trip, stripped down to the fields Phase 3's date-agnostic
-    templates need to resolve calendar membership (SPEC.md §6.2)."""
+    templates need to resolve calendar membership (SPEC.md §4.3)."""
 
     trip_id: str
     line_id: str
@@ -211,7 +211,7 @@ class TripRecord:
 
 @dataclass(frozen=True)
 class LegTemplate:
-    """Date-agnostic counterpart to Leg (SPEC.md §6.2): one row per
+    """Date-agnostic counterpart to Leg (SPEC.md §4.3): one row per
     consecutive stop pair, same as parse_legs() produces, but with
     departure/arrival stored as seconds-since-midnight-of-service-day
     instead of a concrete datetime, so the same row serves every date the
@@ -229,7 +229,7 @@ class LegTemplate:
 
 @dataclass(frozen=True)
 class TransferTemplate:
-    """Date-agnostic counterpart to Transfer (SPEC.md §6.2). from_trip_id/
+    """Date-agnostic counterpart to Transfer (SPEC.md §4.3). from_trip_id/
     to_trip_id are denormalized from the parent LegTemplates so a query-time
     calendar filter (both trips' service_ids active on the queried date)
     needs no join back to `trips`."""
@@ -348,7 +348,7 @@ def derive_transfers(
 ) -> list[Transfer]:
     """Derive Transfers from arriving/departing leg pairs at the same station
     whose gap falls within [min_window_minutes, max_window_minutes]
-    (DATA_SPEC.md §3 step 6, §7.4).
+    (DATA_SPEC.md §3 step 6, §9.4).
 
     A departing leg that's just the same trip continuing through the station
     is not a transfer, even if its gap happens to fall in the window.

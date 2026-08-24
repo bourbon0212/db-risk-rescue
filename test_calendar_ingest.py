@@ -1,4 +1,4 @@
-"""Tests for pipelines/calendar_ingest.py (SPEC.md §6.2): parsing
+"""Tests for pipelines/calendar_ingest.py (SPEC.md §4.3): parsing
 calendar.txt/calendar_dates.txt into plain rows, against the same
 fixtures/gtfs_national_sample/ fixture test_gtfs_scope.py already uses for
 its WD/WEEKEND + holiday-exception calendar scenarios.

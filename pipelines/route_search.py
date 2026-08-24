@@ -16,7 +16,7 @@ connecting them fine (see pipelines/id_crosswalk.py's module docstring):
 
 Still explicitly NOT in scope: 3+ transfer journeys, full graph
 pathfinding/Dijkstra, or "best alternative on miss" re-routing -- deferred
-in SPEC.md §5, unchanged by this extension. engine.py's simulate_route()
+in SPEC.md §7, unchanged by this extension. engine.py's simulate_route()
 already chains delays/buffers/miss-probabilities generically over however
 many legs and transfers a Route has (see test_multi_transfer_routing.py),
 so this module is the only thing that needed to change to unlock 2-hop

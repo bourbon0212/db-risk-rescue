@@ -161,7 +161,7 @@ def scope_gtfs_feed(
 
 
 def scope_gtfs_feed_multi_day(gtfs_dir: Path, out_dir: Path, corridor_stop_ids: set[str]) -> None:
-    """Phase 3 sibling of scope_gtfs_feed() (SPEC.md §6.2): identical
+    """Phase 3 sibling of scope_gtfs_feed() (SPEC.md §4.3): identical
     DB-agency / normalizable-type / corridor-touching filtering, but keeps
     every trip regardless of which service_id/date it belongs to -- no
     _active_service_ids() call, no service_date parameter at all. calendar.txt

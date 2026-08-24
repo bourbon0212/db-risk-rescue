@@ -22,7 +22,7 @@ def test_to_station_id_raises_for_unmapped_stop():
 
 
 def test_crosswalk_is_a_superset_of_the_original_mock_corridor():
-    """The corridor has grown past DATA_SPEC.md §7.1's original "mirror
+    """The corridor has grown past DATA_SPEC.md §9.1's original "mirror
     mock_data.json exactly" scope (per its own "expand coverage later"
     note) -- it must still cover every original station, just not only them."""
     mock_station_ids = {

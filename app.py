@@ -20,7 +20,7 @@ RNG_SEED = 42  # fixed seed keeps ETAs stable across Streamlit reruns
 
 st.set_page_config(page_title="DB Risk & Rescue", page_icon="🚆", layout="wide")
 
-# DATA_SPEC.md §6 / SPEC.md §6.2 point 3 — sidebar toggle for A/B comparing
+# DATA_SPEC.md §6, §7 / SPEC.md §4, §5.1 — sidebar toggle for A/B comparing
 # the Phase 1 mock timetable, the Phase 2 GTFS/JSON pipeline output, and the
 # Phase 3 DuckDB warehouse (dynamic calendar dates) during development.
 LABEL_MOCK = "Phase 1 — mock_data.json"
@@ -98,15 +98,15 @@ def search_and_simulate_warehouse(
     n_iterations: int,
     seed: int,
 ) -> tuple[list[Route], dict[str, RouteSimulationResult], dict[str, Leg], dict[str, Transfer]]:
-    """SPEC.md §6 — Phase 3 counterpart to search_and_simulate(), sourced
+    """SPEC.md §4.3 — Phase 3 counterpart to search_and_simulate(), sourced
     from the DuckDB warehouse and scoped to service_date. legs_by_id/
     transfers_by_id start empty and are grown in place by every
     route_search_duckdb call this makes (the top-level search plus one
     fallback search per transfer node) -- unlike the JSON path, there's no
     whole-dataset index_dataset() call, so only whatever this search
-    actually touches ever ends up in memory (SPEC.md §6.3).
+    actually touches ever ends up in memory (SPEC.md §3.5).
     """
-    # lines table is small/static (SPEC.md §6.2) -- eager-loading all of it
+    # lines table is small/static (SPEC.md §4.3) -- eager-loading all of it
     # needs no per-search scoping, unlike legs/transfers.
     lines_by_id = {
         row[0]: Line(line_id=row[0], type=row[1], operator=row[2])

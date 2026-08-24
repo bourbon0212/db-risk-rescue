@@ -1,4 +1,4 @@
-"""Orchestrator for the Phase 3 DuckDB warehouse (SPEC.md §6): wires
+"""Orchestrator for the Phase 3 DuckDB warehouse (SPEC.md §4.3): wires
 gtfs_ingest's date-agnostic parsers + calendar_ingest + delay_aggregation +
 id_crosswalk into pipelines/warehouse_writer.py, producing
 data/warehouse.duckdb.
@@ -16,7 +16,7 @@ Mirrors pipelines/build_dataset.py's two-build-path structure:
 
 build_dataset.py, route_search.py, and data/real_dataset.json are untouched
 by this module -- Phase 1/2's JSON path keeps working unmodified alongside
-this one (SPEC.md §6.2 point 4).
+this one (SPEC.md §4.3).
 """
 
 import tempfile

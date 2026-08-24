@@ -1,7 +1,7 @@
 """Orchestrator: wires gtfs_ingest + delay_aggregation + id_crosswalk into a
 validated MockDataset and writes it to data/real_dataset.json.
 
-Per DATA_SPEC.md Section 6 and Section 8 step 5. This is a one-off/periodic
+Per DATA_SPEC.md §7 and §8 step 5. This is a one-off/periodic
 script (run manually or on a schedule), not something data_loader.py or
 app.py invoke at request time.
 
