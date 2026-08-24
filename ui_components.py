@@ -183,6 +183,7 @@ def inject_global_styles() -> None:
 
         .itin-details{{border-top:1px solid var(--line); margin-top:10px;}}
         .itin-details > summary{{list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px; font-size:12.5px; font-weight:600; color:var(--muted); user-select:none;}}
+        .itin-details > summary:hover{{color:var(--ink);}}
         .itin-details > summary::-webkit-details-marker{{display:none;}}
         .itin-details > summary::marker{{content:"";}}
         .itin-details > summary .caret{{width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent; border-top:5px solid var(--faint); transition:transform .15s ease;}}
@@ -210,6 +211,16 @@ def inject_global_styles() -> None:
         .risk-low{{background:var(--low-bg); color:var(--low-text);}}
         .risk-medium{{background:var(--med-bg); color:var(--med-text);}}
         .risk-high{{background:var(--high-bg); color:var(--high-text);}}
+
+        /* ---- "Load more" pagination row -- same muted-text hover as
+           .itin-details' "Details" toggle above (design consistency: one
+           expand-cue vocabulary for the whole app). ---- */
+        .st-key-load_more_row{{display:flex; flex-direction:column; align-items:center; gap:8px; margin:4px 0 20px;}}
+        .st-key-load_more_row [data-testid="stCaptionContainer"]{{color:var(--faint); font-size:12px;}}
+        .st-key-load_more_routes{{width:100%; max-width:320px;}}
+        .st-key-load_more_routes button{{background:#fff; border:1px solid var(--line); border-radius:8px; color:var(--muted); font-weight:600; font-size:12.5px; padding:11px 16px; box-shadow:0 1px 2px rgba(20,20,30,.04);}}
+        .st-key-load_more_routes button:hover{{color:var(--ink);}}
+        .st-key-load_more_routes button p{{font-weight:600; margin:0;}}
         </style>
         """,
         unsafe_allow_html=True,

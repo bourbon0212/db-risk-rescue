@@ -31,7 +31,14 @@ import pandas as pd
 from models import Leg, Line, MockDataset, Station, Transfer
 from pipelines.delay_aggregation import DEFAULT_MIN_SAMPLES, build_delay_distributions
 from pipelines.delay_mapping import load_piebro_delays
-from pipelines.gtfs_ingest import LINE_TYPES, derive_transfers, parse_legs, parse_lines, parse_stations
+from pipelines.gtfs_ingest import (
+    LINE_TYPES,
+    derive_transfers,
+    parse_corridor_legs,
+    parse_legs,
+    parse_lines,
+    parse_stations,
+)
 from pipelines.gtfs_scope import scope_gtfs_feed
 from pipelines.id_crosswalk import GTFS_STOP_ID_TO_STATION_ID, STATION_NAMES, to_station_id
 
@@ -240,7 +247,7 @@ def build_real_dataset(
 
             scope_gtfs_feed(extracted_dir, scoped_dir, corridor_stop_ids, service_date)
             all_lines += parse_lines(scoped_dir)
-            all_legs += parse_legs(scoped_dir, service_date)
+            all_legs += parse_corridor_legs(scoped_dir, service_date, corridor_stop_ids)
 
     # fv (long-distance) and rv (regional) are disjoint route categories in
     # gtfs.de's split, so line_id shouldn't collide across them -- dedupe by
@@ -257,16 +264,10 @@ def build_real_dataset(
     if bad_types:
         raise ValueError(f"Lines with invalid type reached build_real_dataset: {bad_types}")
 
-    # Keep only corridor-to-corridor legs -- a kept trip's full sequence
-    # (see gtfs_scope.py) still includes non-corridor intermediate legs.
-    corridor_legs = [
-        leg
-        for leg in all_legs
-        if leg.origin_station_id in corridor_stop_ids
-        and leg.destination_station_id in corridor_stop_ids
-    ]
-
-    corridor_legs = _dedupe_legs(corridor_legs)
+    # all_legs is already corridor-to-corridor only -- parse_corridor_legs
+    # walks each trip's corridor-touching stops directly, skipping over
+    # non-corridor intermediate stops instead of requiring them to be absent.
+    corridor_legs = _dedupe_legs(all_legs)
     transfers = derive_transfers(corridor_legs)
     legs, transfers = _crosswalk_legs(corridor_legs), _crosswalk_transfers(transfers)
 

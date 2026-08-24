@@ -35,6 +35,7 @@ from pipelines.gtfs_ingest import (
     LegTemplate,
     TransferTemplate,
     derive_transfer_templates,
+    parse_corridor_leg_templates,
     parse_leg_templates,
     parse_lines,
     parse_stations,
@@ -218,7 +219,7 @@ def build_real_warehouse(
             scope_gtfs_feed_multi_day(extracted_dir, scoped_dir, corridor_stop_ids)
             all_lines += parse_lines(scoped_dir)
             all_trips += parse_trips(scoped_dir)
-            all_leg_templates += parse_leg_templates(scoped_dir)
+            all_leg_templates += parse_corridor_leg_templates(scoped_dir, corridor_stop_ids)
             all_calendar_rows += parse_calendar(scoped_dir)
             all_calendar_exceptions += parse_calendar_exceptions(scoped_dir)
 
@@ -234,15 +235,11 @@ def build_real_warehouse(
     if bad_types:
         raise ValueError(f"Lines with invalid type reached build_real_warehouse: {bad_types}")
 
-    # Keep only corridor-to-corridor legs, same as build_real_dataset -- a
-    # kept trip's full sequence still includes non-corridor intermediate legs.
-    corridor_leg_templates = [
-        t
-        for t in all_leg_templates
-        if t.origin_station_id in corridor_stop_ids
-        and t.destination_station_id in corridor_stop_ids
-    ]
-    corridor_leg_templates = _dedupe_leg_templates(corridor_leg_templates)
+    # all_leg_templates is already corridor-to-corridor only -- parse_corridor_
+    # leg_templates walks each trip's corridor-touching stops directly,
+    # skipping over non-corridor intermediate stops instead of requiring them
+    # to be absent (same fix as build_real_dataset's parse_corridor_legs).
+    corridor_leg_templates = _dedupe_leg_templates(all_leg_templates)
     transfer_templates = derive_transfer_templates(corridor_leg_templates)
 
     leg_templates = _crosswalk_leg_templates(corridor_leg_templates)

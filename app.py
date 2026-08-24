@@ -74,7 +74,7 @@ def get_warehouse_connection() -> duckdb.DuckDBPyConnection:
     return db.get_connection(read_only=True)
 
 
-@st.cache_data(show_spinner="Searching the timetable and running Monte Carlo simulation...")
+@st.cache_data(show_spinner="Searching the timetable and running simulation...")
 def search_and_simulate(
     path: Path,
     origin_id: str,
@@ -82,10 +82,19 @@ def search_and_simulate(
     departure_time: datetime,
     n_iterations: int,
     seed: int,
-) -> tuple[list[Route], dict[str, RouteSimulationResult]]:
+    limit: int,
+) -> tuple[list[Route], dict[str, RouteSimulationResult], int]:
+    """Runs the (cheap) route search in full, then simulates only the first
+    `limit` routes -- the "Load More" pagination pattern (SPEC.md §5.1):
+    Monte Carlo simulation is the expensive part, so slicing before the
+    simulate loop is what actually saves work, not just display. Returns the
+    unsliced total route count alongside the sliced routes/results so the
+    caller knows whether a "Load more" button is warranted."""
     dataset = get_dataset(path)
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
     candidate_routes = find_candidate_routes(dataset, origin_id, destination_id, departure_time)
+    total_route_count = len(candidate_routes)
+    candidate_routes = candidate_routes[:limit]
     results = {
         route.route_id: simulate_route(
             route, legs_by_id, transfers_by_id, lines_by_id,
@@ -94,10 +103,10 @@ def search_and_simulate(
         )
         for route in candidate_routes
     }
-    return candidate_routes, results
+    return candidate_routes, results, total_route_count
 
 
-@st.cache_data(show_spinner="Searching the timetable and running Monte Carlo simulation...")
+@st.cache_data(show_spinner="Searching the timetable and running simulation...")
 def search_and_simulate_warehouse(
     _conn: duckdb.DuckDBPyConnection,
     origin_id: str,
@@ -106,8 +115,14 @@ def search_and_simulate_warehouse(
     service_date: date,
     n_iterations: int,
     seed: int,
+    limit: int,
 ) -> tuple[
-    list[Route], dict[str, RouteSimulationResult], dict[str, Leg], dict[str, Transfer], dict[str, Line]
+    list[Route],
+    dict[str, RouteSimulationResult],
+    dict[str, Leg],
+    dict[str, Transfer],
+    dict[str, Line],
+    int,
 ]:
     """SPEC.md §4.3 — Phase 3 counterpart to search_and_simulate(), sourced
     from the DuckDB warehouse and scoped to service_date. legs_by_id/
@@ -116,6 +131,12 @@ def search_and_simulate_warehouse(
     fallback search per transfer node) -- unlike the JSON path, there's no
     whole-dataset index_dataset() call, so only whatever this search
     actually touches ever ends up in memory (SPEC.md §3.5).
+
+    Simulation is sliced to the first `limit` routes -- the "Load More"
+    pagination pattern (SPEC.md §5.1) -- since Monte Carlo simulation, not
+    the route search itself, is the expensive part. Returns the unsliced
+    total route count alongside the sliced routes/results so the caller
+    knows whether a "Load more" button is warranted.
     """
     # lines table is small/static (SPEC.md §4.3) -- eager-loading all of it
     # needs no per-search scoping, unlike legs/transfers.
@@ -130,6 +151,8 @@ def search_and_simulate_warehouse(
     candidate_routes = route_search_duckdb.find_candidate_routes(
         _conn, origin_id, destination_id, departure_time, service_date, legs_by_id, transfers_by_id
     )
+    total_route_count = len(candidate_routes)
+    candidate_routes = candidate_routes[:limit]
 
     def route_search_fn(o: str, d: str, t: datetime) -> list[Route]:
         return route_search_duckdb.find_candidate_routes(
@@ -146,7 +169,25 @@ def search_and_simulate_warehouse(
         )
         for route in candidate_routes
     }
-    return candidate_routes, results, legs_by_id, transfers_by_id, lines_by_id
+    return candidate_routes, results, legs_by_id, transfers_by_id, lines_by_id, total_route_count
+
+
+DISPLAY_LIMIT_STEP = 5
+st.session_state.setdefault("display_limit", DISPLAY_LIMIT_STEP)
+
+
+def _sync_display_limit(search_key: tuple) -> None:
+    """Resets the "Load More" pagination back to DISPLAY_LIMIT_STEP whenever
+    the search itself changes (station pair, date, or departure time) --
+    otherwise a limit raised by a previous search's "Load more" clicks would
+    carry over and silently simulate more routes than the new search needs."""
+    if st.session_state.get("last_search_key") != search_key:
+        st.session_state["last_search_key"] = search_key
+        st.session_state.display_limit = DISPLAY_LIMIT_STEP
+
+
+def _load_more_routes() -> None:
+    st.session_state.display_limit += DISPLAY_LIMIT_STEP
 
 
 render_header_banner(N_ITERATIONS)
@@ -178,9 +219,13 @@ if use_warehouse:
         default_date=calendar_min,
     )
     departure_datetime = datetime.combine(service_date, departure_time_of_day)
+    _sync_display_limit((data_source_label, origin_id, destination_id, departure_datetime, service_date))
 
-    candidate_routes, results_by_route, legs_by_id, transfers_by_id, lines_by_id = search_and_simulate_warehouse(
-        conn, origin_id, destination_id, departure_datetime, service_date, N_ITERATIONS, RNG_SEED
+    candidate_routes, results_by_route, legs_by_id, transfers_by_id, lines_by_id, total_route_count = (
+        search_and_simulate_warehouse(
+            conn, origin_id, destination_id, departure_datetime, service_date,
+            N_ITERATIONS, RNG_SEED, st.session_state.display_limit,
+        )
     )
 else:
     dataset = get_dataset(data_source_path)
@@ -206,9 +251,11 @@ else:
     departure_datetime = datetime.combine(
         earliest_leg.scheduled_departure.date(), departure_time_of_day
     )
+    _sync_display_limit((data_source_label, origin_id, destination_id, departure_datetime, None))
 
-    candidate_routes, results_by_route = search_and_simulate(
-        data_source_path, origin_id, destination_id, departure_datetime, N_ITERATIONS, RNG_SEED
+    candidate_routes, results_by_route, total_route_count = search_and_simulate(
+        data_source_path, origin_id, destination_id, departure_datetime,
+        N_ITERATIONS, RNG_SEED, st.session_state.display_limit,
     )
 
 if not candidate_routes:
@@ -219,6 +266,10 @@ if not candidate_routes:
     st.stop()
 
 # --- §4.2 Route comparison view ----------------------------------------------
+# candidate_routes only ever holds the loaded (display_limit-sliced) routes --
+# sorting, "Fastest scheduled" or "Safest arrival", ranks within what's
+# loaded, not the full candidate pool. Simulating every unloaded route just
+# to rank it correctly would defeat the point of pagination.
 if sort_choice == SORT_FASTEST:
     candidate_routes = sorted(candidate_routes, key=lambda r: r.scheduled_arrival)
 else:
@@ -229,3 +280,13 @@ else:
 for route in candidate_routes:
     result = results_by_route[route.route_id]
     render_route_card(route, result, stations_by_id, legs_by_id, transfers_by_id, lines_by_id)
+
+if total_route_count > len(candidate_routes):
+    with st.container(key="load_more_row"):
+        st.caption(f"Showing {len(candidate_routes)} of {total_route_count} routes")
+        st.button(
+            "More",
+            key="load_more_routes",
+            on_click=_load_more_routes,
+            width="stretch",
+        )

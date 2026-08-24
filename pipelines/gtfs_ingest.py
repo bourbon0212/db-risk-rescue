@@ -300,6 +300,111 @@ def parse_leg_templates(gtfs_dir: Path) -> list[LegTemplate]:
     return templates
 
 
+@dataclass(frozen=True)
+class _CorridorLegRow:
+    """One corridor-to-corridor hop within a trip, resolved but not yet
+    turned into a Leg/LegTemplate -- shared intermediate result for
+    parse_corridor_legs/parse_corridor_leg_templates below."""
+
+    trip_id: str
+    line_id: str
+    sequence_index: int
+    origin_station_id: str
+    destination_station_id: str
+    origin_departure_time: str
+    destination_arrival_time: str
+
+
+def _walk_corridor_legs(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[_CorridorLegRow]:
+    """For every trip, reduce its stop_sequence-sorted stop_times down to
+    just the stops touching a corridor station (order preserved), then pair
+    up each consecutive corridor stop with the next.
+
+    This is the fix for a real bug: parse_legs/parse_leg_templates emit a
+    leg per *physically*-consecutive stop pair, so a real train's journey
+    between two corridor hubs with even one non-corridor stop in between
+    (near-universal on long-distance runs) produced legs where neither
+    endpoint was a corridor station -- and a later "keep only corridor-to-
+    corridor legs" filter then threw all of them away, silently
+    disconnecting the hubs entirely rather than just modeling extra stops.
+    Measured against the real GTFS.DE fv feed: that adjacency-only approach
+    dropped 84% of leg segments and fully disconnected ~1,000 of ~4,200
+    long-distance trips from the corridor graph. Walking the *corridor-
+    filtered* subsequence instead -- skipping over non-corridor stops rather
+    than being blocked by them -- keeps the hub-to-hub connection while
+    still storing only real corridor stops as leg endpoints.
+    """
+    stop_to_station = _load_stop_to_station_map(gtfs_dir)
+    route_line_ids = _load_route_line_ids(gtfs_dir)
+
+    trip_to_line: dict[str, str] = {}
+    with (gtfs_dir / "trips.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            trip_to_line[row["trip_id"]] = route_line_ids[row["route_id"]]
+
+    stop_times_by_trip: dict[str, list[dict]] = defaultdict(list)
+    with (gtfs_dir / "stop_times.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            stop_times_by_trip[row["trip_id"]].append(row)
+
+    corridor_rows: list[_CorridorLegRow] = []
+    for trip_id, rows in stop_times_by_trip.items():
+        rows.sort(key=lambda r: int(r["stop_sequence"]))
+        line_id = trip_to_line[trip_id]
+        touching_corridor = [r for r in rows if stop_to_station[r["stop_id"]] in corridor_stop_ids]
+        for i in range(len(touching_corridor) - 1):
+            origin_row, dest_row = touching_corridor[i], touching_corridor[i + 1]
+            corridor_rows.append(
+                _CorridorLegRow(
+                    trip_id=trip_id,
+                    line_id=line_id,
+                    sequence_index=i,
+                    origin_station_id=stop_to_station[origin_row["stop_id"]],
+                    destination_station_id=stop_to_station[dest_row["stop_id"]],
+                    origin_departure_time=origin_row["departure_time"],
+                    destination_arrival_time=dest_row["arrival_time"],
+                )
+            )
+    return corridor_rows
+
+
+def parse_corridor_legs(gtfs_dir: Path, service_date: date, corridor_stop_ids: set[str]) -> list[Leg]:
+    """Corridor-aware sibling of parse_legs() (Phase 2 JSON build path) --
+    see _walk_corridor_legs for why this exists instead of parse_legs() plus
+    a post-hoc corridor-to-corridor filter."""
+    return [
+        Leg(
+            leg_id=f"{r.trip_id}::{r.sequence_index}",
+            line_id=r.line_id,
+            origin_station_id=r.origin_station_id,
+            destination_station_id=r.destination_station_id,
+            scheduled_departure=_parse_gtfs_time(r.origin_departure_time, service_date),
+            scheduled_arrival=_parse_gtfs_time(r.destination_arrival_time, service_date),
+            delay_distribution_minutes={"0": 1.0},
+        )
+        for r in _walk_corridor_legs(gtfs_dir, corridor_stop_ids)
+    ]
+
+
+def parse_corridor_leg_templates(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[LegTemplate]:
+    """Corridor-aware sibling of parse_leg_templates() (Phase 3 warehouse
+    build path) -- see _walk_corridor_legs for why this exists instead of
+    parse_leg_templates() plus a post-hoc corridor-to-corridor filter."""
+    return [
+        LegTemplate(
+            leg_id=f"{r.trip_id}::{r.sequence_index}",
+            trip_id=r.trip_id,
+            line_id=r.line_id,
+            sequence_index=r.sequence_index,
+            origin_station_id=r.origin_station_id,
+            destination_station_id=r.destination_station_id,
+            departure_seconds=_seconds_since_midnight(r.origin_departure_time),
+            arrival_seconds=_seconds_since_midnight(r.destination_arrival_time),
+        )
+        for r in _walk_corridor_legs(gtfs_dir, corridor_stop_ids)
+    ]
+
+
 def derive_transfer_templates(
     leg_templates: list[LegTemplate], min_window_minutes: int = 2, max_window_minutes: int = 60
 ) -> list[TransferTemplate]:

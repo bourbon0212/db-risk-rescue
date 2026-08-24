@@ -1,0 +1,4 @@
+stop_id,stop_name,parent_station,location_type
+DE_A,Station A,,1
+DE_B,Station B (not in corridor),,1
+DE_C,Station C,,1
