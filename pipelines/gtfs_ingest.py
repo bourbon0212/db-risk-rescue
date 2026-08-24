@@ -5,6 +5,7 @@ Per DATA_SPEC.md Section 3 and Section 8 (build sequence steps 1-2).
 
 import csv
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -119,12 +120,27 @@ def parse_lines(gtfs_dir: Path) -> list[Line]:
     return lines
 
 
+def _seconds_since_midnight(time_str: str) -> int:
+    """Parse a GTFS HH:MM:SS time (hours may exceed 23 for post-midnight
+    trips) into seconds since midnight of its nominal service day -- the
+    date-agnostic form Phase 3's leg_templates store (SPEC.md §6.2), shared
+    with _parse_gtfs_time below so the anchored and template-based parsers
+    can't drift apart on how they read the same column."""
+    hours, minutes, seconds = (int(x) for x in time_str.strip().split(":"))
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def _anchor_datetime(seconds_since_midnight: int, service_date: date) -> datetime:
+    """Turn a date-agnostic seconds-since-midnight offset into a concrete
+    datetime anchored on service_date -- the inverse of _seconds_since_midnight."""
+    midnight = datetime.combine(service_date, datetime.min.time())
+    return midnight + timedelta(seconds=seconds_since_midnight)
+
+
 def _parse_gtfs_time(time_str: str, service_date: date) -> datetime:
     """Convert a GTFS HH:MM:SS time (hours may exceed 23 for post-midnight
     trips) into a full datetime anchored on service_date."""
-    hours, minutes, seconds = (int(x) for x in time_str.strip().split(":"))
-    midnight = datetime.combine(service_date, datetime.min.time())
-    return midnight + timedelta(hours=hours, minutes=minutes, seconds=seconds)
+    return _anchor_datetime(_seconds_since_midnight(time_str), service_date)
 
 
 def _load_stop_to_station_map(gtfs_dir: Path) -> dict[str, str]:
@@ -181,6 +197,145 @@ def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
                 )
             )
     return legs
+
+
+@dataclass(frozen=True)
+class TripRecord:
+    """One GTFS trip, stripped down to the fields Phase 3's date-agnostic
+    templates need to resolve calendar membership (SPEC.md §6.2)."""
+
+    trip_id: str
+    line_id: str
+    service_id: str
+
+
+@dataclass(frozen=True)
+class LegTemplate:
+    """Date-agnostic counterpart to Leg (SPEC.md §6.2): one row per
+    consecutive stop pair, same as parse_legs() produces, but with
+    departure/arrival stored as seconds-since-midnight-of-service-day
+    instead of a concrete datetime, so the same row serves every date the
+    parent trip's service_id is active on -- no per-day row multiplication."""
+
+    leg_id: str
+    trip_id: str
+    line_id: str
+    sequence_index: int
+    origin_station_id: str
+    destination_station_id: str
+    departure_seconds: int
+    arrival_seconds: int
+
+
+@dataclass(frozen=True)
+class TransferTemplate:
+    """Date-agnostic counterpart to Transfer (SPEC.md §6.2). from_trip_id/
+    to_trip_id are denormalized from the parent LegTemplates so a query-time
+    calendar filter (both trips' service_ids active on the queried date)
+    needs no join back to `trips`."""
+
+    transfer_id: str
+    station_id: str
+    from_leg_id: str
+    to_leg_id: str
+    from_trip_id: str
+    to_trip_id: str
+    buffer_minutes: int
+
+
+def parse_trips(gtfs_dir: Path) -> list[TripRecord]:
+    """One GTFS trip -> one TripRecord (trip_id, line_id, service_id)."""
+    route_line_ids = _load_route_line_ids(gtfs_dir)
+    trips = []
+    with (gtfs_dir / "trips.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            trips.append(
+                TripRecord(
+                    trip_id=row["trip_id"],
+                    line_id=route_line_ids[row["route_id"]],
+                    service_id=row["service_id"],
+                )
+            )
+    return trips
+
+
+def parse_leg_templates(gtfs_dir: Path) -> list[LegTemplate]:
+    """Date-agnostic sibling of parse_legs(): walks each trip's stop_times in
+    sequence exactly the same way, but emits LegTemplate rows (seconds-since-
+    midnight) instead of Leg rows anchored to one service_date. Used by
+    Phase 3's warehouse build (pipelines/build_warehouse.py); parse_legs()
+    is unchanged and still backs the Phase 1/2 single-date JSON build.
+    """
+    stop_to_station = _load_stop_to_station_map(gtfs_dir)
+    route_line_ids = _load_route_line_ids(gtfs_dir)
+
+    trip_to_line: dict[str, str] = {}
+    with (gtfs_dir / "trips.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            trip_to_line[row["trip_id"]] = route_line_ids[row["route_id"]]
+
+    stop_times_by_trip: dict[str, list[dict]] = defaultdict(list)
+    with (gtfs_dir / "stop_times.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            stop_times_by_trip[row["trip_id"]].append(row)
+
+    templates = []
+    for trip_id, rows in stop_times_by_trip.items():
+        rows.sort(key=lambda r: int(r["stop_sequence"]))
+        line_id = trip_to_line[trip_id]
+        for i in range(len(rows) - 1):
+            origin_row, dest_row = rows[i], rows[i + 1]
+            templates.append(
+                LegTemplate(
+                    leg_id=f"{trip_id}::{i}",
+                    trip_id=trip_id,
+                    line_id=line_id,
+                    sequence_index=i,
+                    origin_station_id=stop_to_station[origin_row["stop_id"]],
+                    destination_station_id=stop_to_station[dest_row["stop_id"]],
+                    departure_seconds=_seconds_since_midnight(origin_row["departure_time"]),
+                    arrival_seconds=_seconds_since_midnight(dest_row["arrival_time"]),
+                )
+            )
+    return templates
+
+
+def derive_transfer_templates(
+    leg_templates: list[LegTemplate], min_window_minutes: int = 2, max_window_minutes: int = 60
+) -> list[TransferTemplate]:
+    """Date-agnostic sibling of derive_transfers(): same station-matching and
+    window logic, operating on seconds-of-day gaps instead of datetime gaps,
+    computed once regardless of how many calendar days the templates cover.
+    Whether a given TransferTemplate is actually usable on a specific query
+    date (i.e. both trips' service_ids are active that day) is resolved at
+    route-search time (pipelines/route_search_duckdb.py), not here.
+    """
+    arrivals_by_station: dict[str, list[LegTemplate]] = defaultdict(list)
+    departures_by_station: dict[str, list[LegTemplate]] = defaultdict(list)
+    for leg in leg_templates:
+        arrivals_by_station[leg.destination_station_id].append(leg)
+        departures_by_station[leg.origin_station_id].append(leg)
+
+    transfers = []
+    for station_id, arriving_legs in arrivals_by_station.items():
+        for arriving in arriving_legs:
+            for departing in departures_by_station.get(station_id, []):
+                if arriving.trip_id == departing.trip_id:
+                    continue
+                buffer_minutes = (departing.departure_seconds - arriving.arrival_seconds) // 60
+                if min_window_minutes <= buffer_minutes <= max_window_minutes:
+                    transfers.append(
+                        TransferTemplate(
+                            transfer_id=f"TR_{arriving.leg_id}__{departing.leg_id}",
+                            station_id=station_id,
+                            from_leg_id=arriving.leg_id,
+                            to_leg_id=departing.leg_id,
+                            from_trip_id=arriving.trip_id,
+                            to_trip_id=departing.trip_id,
+                            buffer_minutes=buffer_minutes,
+                        )
+                    )
+    return transfers
 
 
 def _trip_id_of(leg_id: str) -> str:

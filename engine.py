@@ -2,6 +2,7 @@
 
 import math
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -51,9 +52,10 @@ class FallbackPlan:
 
 def precompute_fallback_plans(
     route: Route,
-    dataset: MockDataset,
+    dataset: MockDataset | None,
     legs_by_id: dict[str, Leg],
     transfers_by_id: dict[str, Transfer],
+    route_search_fn: Callable[[str, str, datetime], list[Route]] | None = None,
 ) -> dict[str, FallbackPlan | None]:
     """SPEC.md §3.4 — one fallback lookup per transfer node in `route`,
     computed once before the Monte Carlo loop so a missed connection is an
@@ -66,17 +68,33 @@ def precompute_fallback_plans(
     station. A transfer with no surviving candidate route maps to None,
     meaning simulate_route falls back to the static same-line-headway wait
     (§3.2 Step 4) for that node, unchanged.
+
+    `route_search_fn` (SPEC.md §6.3), if given, replaces the default
+    in-memory `find_candidate_routes(dataset, ...)` call with
+    `route_search_fn(origin_id, destination_id, departure_time)` — this is
+    how the Phase 3 DuckDB-backed path (pipelines/route_search_duckdb.py)
+    plugs in without this function's control flow changing at all. `dataset`
+    may be None whenever route_search_fn is given, since it's then never
+    touched. Either way, this whole function still runs once per transfer
+    node before the Monte Carlo loop, never inside it — the O(1)-per-
+    iteration guarantee only depends on that call count, not on which
+    backend answers each call.
     """
     ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
     ordered_transfers = [transfers_by_id[t_id] for t_id in route.transfers]
+
+    search = route_search_fn or (
+        lambda origin_id, destination_id, departure_time: find_candidate_routes(
+            dataset, origin_id, destination_id, departure_time
+        )
+    )
 
     plans: dict[str, FallbackPlan | None] = {}
     for i, transfer in enumerate(ordered_transfers):
         downstream_leg = ordered_legs[i + 1]
         remaining_budget = MAX_TOTAL_TRANSFERS - (i + 1)
 
-        candidates = find_candidate_routes(
-            dataset,
+        candidates = search(
             transfer.station_id,
             route.destination_station_id,
             downstream_leg.scheduled_departure,

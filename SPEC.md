@@ -1,8 +1,8 @@
 # DB Risk & Rescue — System Design Specification
 
 **Phase:** System Design (pre-implementation)
-**Date:** 2026-08-23 (revised same day — §2.6 added, §3.2 Step 4 amended); revised 2026-08-24 — §3.4 added, promoting "best-alternative-route re-search on miss" from §5 into v1 scope now that the 2-transfer route search (DATA_SPEC.md §5, §8) gives it real candidate routes to search over.
-**Status:** Consensus reached — ready for prototyping phase
+**Date:** 2026-08-23 (revised same day — §2.6 added, §3.2 Step 4 amended); revised 2026-08-24 — §3.4 added, promoting "best-alternative-route re-search on miss" from §5 into v1 scope now that the 2-transfer route search (DATA_SPEC.md §5, §8) gives it real candidate routes to search over; revised 2026-08-24 (later same day) — §6 added, bringing "DuckDB Migration" and "Dynamic Calendar Dates" into scope as Phase 3.
+**Status:** Consensus reached — Phase 3 (§6) design plan pending approval before implementation
 
 ## 1. Objective
 
@@ -156,6 +156,8 @@ Scope boundary: this is one level of re-routing. If a transfer *within* a fallba
 
 Minimal-friction search: user selects **origin, destination, and departure time**. The app auto-generates candidate routes from the mock timetable data and immediately runs the Monte Carlo simulation with default parameters (N = 1,000 iterations) — no advanced/simulation-tuning panel in v1.
 
+As of Phase 3 (§6), the input flow gains a fourth field — **service date** — constrained to the GTFS feed's published calendar window (§6.2). Candidate-route generation and the Monte Carlo simulation are both scoped to whichever calendar date the user picks, in addition to origin/destination/time.
+
 ### 4.2 Route Comparison View
 
 A **ranked card list** of candidate routes (typically 3–5), each card showing:
@@ -182,6 +184,33 @@ These were raised and deliberately deferred during design consensus, to keep v1 
 - **Advanced simulation controls** in the UI — exposing iteration count, risk-aversion weighting, or minimum acceptable buffer to the user.
 - **Full distribution histogram output** per route, instead of just mean + percentile band.
 
-## 6. Next Phase
+## 6. Phase 3: Database Engine Upgrade & Dynamic Calendar Dates (in scope)
+
+Added 2026-08-24. Phase 2 (DATA_SPEC.md) replaced the hand-authored mock timetable with a real GTFS.DE + piebro-delay pipeline, but still wrote its output as one JSON file scoped to a single, fixed `service_date` baked in at build time (DATA_SPEC.md §3 step 1, §8 step 5). Phase 3 removes that single-date constraint and migrates the storage backend so a multi-day GTFS calendar window doesn't have to be loaded into memory (or re-baked into a fresh multi-megabyte JSON file per day) to support it.
+
+### 6.1 Objective
+
+Let the user pick **any date within the ingested GTFS calendar window** and get a route search + Monte Carlo simulation scoped to that date's actual active services, while keeping the app's request-time memory footprint and the Monte Carlo hot loop's performance the same as today's single-date JSON build.
+
+### 6.2 Scope
+
+1. **DuckDB migration** — `pipelines/build_dataset.py`'s ETL output moves from a single `data/real_dataset.json` (one Pydantic-validated snapshot, one fixed date) to a DuckDB-backed store that holds topology and delay data in date-agnostic form, queried per-search rather than loaded whole.
+2. **Dynamic calendar** — GTFS `calendar.txt` (weekday pattern + date range) and `calendar_dates.txt` (single-date exceptions) are ingested and preserved as queryable data, not collapsed into one date at build time the way `pipelines/gtfs_scope.py`'s `_active_service_ids` currently does. Service-date resolution becomes a query-time operation.
+3. **UI date picker** — `app.py` gains a date input, constrained to the GTFS feed's covered date range, alongside the existing origin/destination/time inputs (§4.1).
+4. **Data access layer** — `route_search.py` and `app.py` query the DuckDB store dynamically per selected date instead of filtering an in-memory `dataset.legs`/`dataset.transfers` list, while `models.py` (Station/Line/Leg/Transfer/Route) and `engine.py`'s simulation logic remain the query-time contract and stay unchanged — precisely the same "don't touch the simulation core" boundary DATA_SPEC.md §1 established for Phase 2's JSON pipeline.
+
+### 6.3 Non-negotiable constraints carried over from Phase 1/2
+
+- The O(1)-per-iteration fallback-plan cache (§3.4) must stay O(1): fallback search still runs once per transfer node before the Monte Carlo loop, never inside it. Whether that one-time search queries an in-memory list or DuckDB, it happens the same number of times as today.
+- `engine.py`'s Monte Carlo hot loop (`simulate_route`'s per-iteration sampling) must not touch the database at all — it consumes plain in-memory `Leg`/`Transfer` objects assembled once per search, exactly as it does today.
+- `models.py`'s Pydantic contract (§2) does not change shape; Phase 3 changes *where data comes from*, not the objects `engine.py`/`ui_components.py` consume.
+
+### 6.4 Out of scope for Phase 3
+
+Everything in §5 remains deferred, unchanged by this phase. Also explicitly deferred here: multi-day/multi-date batch simulation (comparing risk across several dates at once), live/real-time GTFS-RT integration (DATA_SPEC.md's offline-only decision stands), and any change to the 2-transfer route-search cap (DATA_SPEC.md §5).
+
+## 7. Next Phase
 
 With this spec agreed, the next phase is prototyping: build the mock JSON dataset (stations, lines, legs, transfers, routes) conforming to §2, implement the simulation engine per §3, and build the Streamlit views per §4.
+
+Phase 2 (DATA_SPEC.md) and Phase 3 (§6, pending a detailed architecture/schema design plan) extend this same core without altering §2's data contract or §3's algorithm.

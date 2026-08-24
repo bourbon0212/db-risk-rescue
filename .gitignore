@@ -12,3 +12,9 @@ __pycache__/
 data/raw/
 *.parquet
 *.zip
+
+# Phase 3 DuckDB warehouse (pipelines/build_warehouse.py) -- regenerable
+# build output, like data/raw/ above. Unlike real_dataset.json, this one IS
+# excluded: it's a binary database file (not a diffable JSON snapshot) that
+# would just bloat the repo on every rebuild.
+*.duckdb

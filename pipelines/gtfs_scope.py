@@ -158,3 +158,72 @@ def scope_gtfs_feed(
     # station map, and the file is small enough (tens of thousands of rows)
     # that filtering it isn't worth the added complexity.
     _write_rows(out_dir / "stops.txt", stops_fields, stops_rows)
+
+
+def scope_gtfs_feed_multi_day(gtfs_dir: Path, out_dir: Path, corridor_stop_ids: set[str]) -> None:
+    """Phase 3 sibling of scope_gtfs_feed() (SPEC.md §6.2): identical
+    DB-agency / normalizable-type / corridor-touching filtering, but keeps
+    every trip regardless of which service_id/date it belongs to -- no
+    _active_service_ids() call, no service_date parameter at all. calendar.txt
+    and calendar_dates.txt are copied through unfiltered (small files; some
+    rows may reference service_ids no kept trip uses, which is harmless) so
+    pipelines/calendar_ingest.py can parse the full calendar window
+    downstream. This is what makes the warehouse build "dynamic calendar
+    dates" rather than one date baked in at build time.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    agency_fields, agency_rows = _read_rows(gtfs_dir / "agency.txt")
+    kept_agency_ids = {row["agency_id"] for row in agency_rows if _is_db_agency(row["agency_name"])}
+    kept_agency_rows = [row for row in agency_rows if row["agency_id"] in kept_agency_ids]
+
+    route_fields, route_rows = _read_rows(gtfs_dir / "routes.txt")
+    kept_route_rows = []
+    for row in route_rows:
+        if row["agency_id"] not in kept_agency_ids:
+            continue
+        try:
+            _normalize_line_type(row.get("route_short_name", ""), row.get("route_type", ""))
+        except ValueError:
+            continue
+        kept_route_rows.append(row)
+    kept_route_ids = {row["route_id"] for row in kept_route_rows}
+
+    trip_fields, trip_rows = _read_rows(gtfs_dir / "trips.txt")
+    kept_trips_by_id = {
+        row["trip_id"]: row for row in trip_rows if row["route_id"] in kept_route_ids
+    }
+
+    stops_fields, stops_rows = _read_rows(gtfs_dir / "stops.txt")
+    stop_to_parent = {
+        row["stop_id"]: (row.get("parent_station", "").strip() or row["stop_id"])
+        for row in stops_rows
+    }
+
+    stop_time_fields, stop_time_rows = _read_rows(gtfs_dir / "stop_times.txt")
+
+    corridor_trip_ids: set[str] = set()
+    for row in stop_time_rows:
+        if row["trip_id"] not in kept_trips_by_id:
+            continue
+        if stop_to_parent.get(row["stop_id"], row["stop_id"]) in corridor_stop_ids:
+            corridor_trip_ids.add(row["trip_id"])
+
+    kept_stop_time_rows = [row for row in stop_time_rows if row["trip_id"] in corridor_trip_ids]
+    kept_trip_rows = [row for tid, row in kept_trips_by_id.items() if tid in corridor_trip_ids]
+    kept_used_route_ids = {row["route_id"] for row in kept_trip_rows}
+    kept_route_rows = [row for row in kept_route_rows if row["route_id"] in kept_used_route_ids]
+    kept_used_agency_ids = {row["agency_id"] for row in kept_route_rows}
+    kept_agency_rows = [row for row in kept_agency_rows if row["agency_id"] in kept_used_agency_ids]
+
+    _write_rows(out_dir / "agency.txt", agency_fields, kept_agency_rows)
+    _write_rows(out_dir / "routes.txt", route_fields, kept_route_rows)
+    _write_rows(out_dir / "trips.txt", trip_fields, kept_trip_rows)
+    _write_rows(out_dir / "stop_times.txt", stop_time_fields, kept_stop_time_rows)
+    _write_rows(out_dir / "stops.txt", stops_fields, stops_rows)
+
+    for calendar_file in ("calendar.txt", "calendar_dates.txt"):
+        src = gtfs_dir / calendar_file
+        if src.exists():
+            fields, rows = _read_rows(src)
+            _write_rows(out_dir / calendar_file, fields, rows)
