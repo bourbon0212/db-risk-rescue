@@ -124,7 +124,7 @@ GTFS_STOP_ID_TO_STATION_ID: dict[str, str] = {
 # short-name-over-raw-id choice in gtfs_ingest.py); the 19 new ones use a
 # clean canonical form since there's no Phase 1 precedent to match.
 STATION_NAMES: dict[str, str] = {
-    "DE_FRA_HBF": "Frankfurt(Main)Hbf",
+    "DE_FRA_HBF": "Frankfurt(Main) Hbf",
     "DE_KOL_HBF": "Köln Hbf",
     "DE_STG_HBF": "Stuttgart Hbf",
     "DE_MAN_HBF": "Mannheim Hbf",

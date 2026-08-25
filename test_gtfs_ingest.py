@@ -32,7 +32,7 @@ def test_parse_stations_keeps_only_parent_stations():
 def test_parse_stations_maps_name():
     stations = parse_stations(FIXTURE_DIR)
     by_id = {s.station_id: s.name for s in stations}
-    assert by_id["DE_FRA_HBF"] == "Frankfurt(Main)Hbf"
+    assert by_id["DE_FRA_HBF"] == "Frankfurt(Main) Hbf"
     assert by_id["DE_KOL_HBF"] == "Köln Hbf"
 
 

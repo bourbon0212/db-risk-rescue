@@ -24,7 +24,7 @@ The shapes below are `models.py`'s Pydantic contract — the *only* interface `e
 ```json
 {
   "station_id": "DE_FRA_HBF",
-  "name": "Frankfurt(Main)Hbf"
+  "name": "Frankfurt(Main) Hbf"
 }
 ```
 

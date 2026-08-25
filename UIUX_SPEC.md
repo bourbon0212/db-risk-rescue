@@ -189,7 +189,7 @@ Every field in this card maps 1:1 to an existing backend input — origin statio
 │                                │ Expected 02:43 +24m ┊ Safest 03:19 +60m │
 │                                └───────────────────────┘   │
 │ [────── ICE 22 ──────][── ICE 42 ──────────────────────]  │
-│ Frankfurt(Main)Hbf                             Köln Hbf   │
+│ Frankfurt(Main) Hbf                            Köln Hbf   │
 │ ─────────────────────────────────────────────────────────│
 │                        Details ▾                          │
 └──────────────────────────────────────────────────────────┘
