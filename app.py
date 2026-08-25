@@ -13,6 +13,7 @@ from data_loader import MOCK_DATA_PATH, REAL_DATA_PATH, load_dataset
 from engine import RouteSimulationResult, index_dataset, precompute_fallback_plans, simulate_route
 from models import Leg, Line, MockDataset, Route, Station, Transfer
 from pipelines import route_search_duckdb
+from pipelines.route_filters import apply_sanity_filter
 from pipelines.route_search import (
     build_route_search_indexes,
     find_candidate_routes,
@@ -98,9 +99,10 @@ def search_routes(
     so simulate_one_route (below) can cache per-route instead of per-batch."""
     dataset = get_dataset(path)
     search_indexes = get_search_indexes(path)
-    return find_candidate_routes(
+    routes = find_candidate_routes(
         dataset, origin_id, destination_id, departure_time, indexes=search_indexes
     )
+    return apply_sanity_filter(routes)
 
 
 @st.cache_data(show_spinner=False)
@@ -157,6 +159,7 @@ def search_routes_warehouse(
     candidate_routes = route_search_duckdb.find_candidate_routes(
         _conn, origin_id, destination_id, departure_time, service_date, legs_by_id, transfers_by_id
     )
+    candidate_routes = apply_sanity_filter(candidate_routes)
     return candidate_routes, legs_by_id, transfers_by_id
 
 
