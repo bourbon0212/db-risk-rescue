@@ -15,11 +15,12 @@ You are an expert Python Developer and Data Scientist implementing the DB Delay 
 - pandas / pyarrow (GTFS + historical delay Parquet ingestion pipelines)
 - pytest (unit testing)
 
-## Current Architecture (as of Phase 3.2 — `SPEC.md` §7)
+## Architecture
 
-- **Query-time contract**: `models.py`'s Pydantic models (Station/Line/Leg/Transfer/Route, `SPEC.md` §2) are the one interface `engine.py`'s Monte Carlo simulation and `ui_components.py`'s rendering consume. Unchanged since Phase 1 — only what produces those objects has.
-- **Three selectable data sources** in `app.py`'s sidebar (`SPEC.md` §4.2): Mock (`mock_data.json`), Snapshot (`data/real_dataset.json`, one fixed date), Warehouse (default, `data/warehouse.duckdb`, any date in the ingested calendar window).
-- **Simulation engine**: `engine.py`'s Monte Carlo loop never touches a database — it consumes plain in-memory `Leg`/`Transfer` objects assembled once per search. Missed-connection re-routing (`precompute_fallback_plans`) is pre-computed once per transfer node before the simulation loop, giving each iteration an O(1) cache lookup on a miss (`SPEC.md` §3.4).
+Don't restate it here — it lives in the specs and would drift if mirrored:
+the Pydantic contract (`SPEC.md` §2), the three backends (§4.2), the
+simulation engine and its O(1) fallback cache (§3.4), and the phase history
+(§7). Read those before changing anything they govern.
 
 ## Core Directives
 
