@@ -1,8 +1,11 @@
 # DB Risk & Rescue — System Design Specification
 
-**Status:** Phases 1–3 built, tested, merged to `main`.
-**Companion docs:** `DATA_SPEC.md` (data architecture/pipelines) · `UIUX_SPEC.md` (UI/UX design system)
+**This is the primary spec: what the system computes and why.** Read it if you're touching the risk maths, the simulation, or the search logic. If you just need a threshold value, jump straight to §6 — every constant in the app is tabulated there. New to the project? Start with [README.md](README.md); §3 opens with a worked example that's the fastest way into the risk model.
+
+Data pipelines and storage live in `DATA_SPEC.md`; colours, wording and layout live in `UIUX_SPEC.md`.
+
 **Section map:** §1 Objective · §2 Core Data Models · §3 Engine · §4 Storage · §5 UI Spec · §6 Core Thresholds & Constants · §7 Development History & Phases · §8 Limitations & Future Work
+**Status:** Phases 1–3 built, tested, merged to `main`.
 
 ## 1. Objective & System Overview
 
@@ -78,6 +81,24 @@ Single-leg routes have an empty `transfers` array.
 No full timetable to query "what's the next train" — service frequency is a static lookup keyed by `Line.type` (values: §6), used to resolve missed connections (§3.2 step 4). Fixed constant in the engine (`engine.SERVICE_FREQUENCY_MINUTES`), not derived from data — placeholders sanity-checked against real DB frequencies, not empirically fit.
 
 ## 3. Routing & Monte Carlo Simulation Engine
+
+**Start here: one transfer, end to end.** The subsections below derive each piece separately. This is all of them applied to a single real transfer from the current warehouse — Köln → München on 2026-08-24, changing at Mannheim Hbf.
+
+| | Value | Where it comes from |
+|---|---|---|
+| Scheduled buffer | 26 min | The timetable: next departure − this arrival (§2.4) |
+| Station MCT | 10 min | Mannheim is a major hub, so the 10-minute tier (§3.6.1) |
+| Upstream delay history | ICE 43: `{0: .37, 5: .25, 15: .17, 30: .14, 60: .07}` | Aggregated from the delay archive (`DATA_SPEC.md` §4) |
+
+Now the five steps (§5.3):
+
+1. **Raw probability** — sum the buckets that exceed the 26-minute buffer: `0.14 + 0.07 = 0.21`. A 21% chance the ICE arrives too late to make this connection.
+2. **MCT floor** — the buffer (26) comfortably clears Mannheim's MCT (10), so no floor applies. Had it been a 4-minute buffer, §3.6.2 would have raised the effective probability regardless of how punctual ICE 43 is.
+3. **Band** — 21% falls in 10–30%, so: Yellow.
+4. **Impact Override** — only ever rescues Red transfers, so it doesn't apply here.
+5. **Phrase** — Yellow with no override reads **`Tight connection (21% risk) · 26 min`** (`UIUX_SPEC.md` §2.2).
+
+Meanwhile the simulation runs 1,000 iterations over the whole route and reports a P85 arrival 90 minutes past schedule — which lands this route's *card edge* in the Red band (§5.2), even though its only transfer is Yellow. That divergence is the design working as intended: the transfer is probably fine, but when it isn't, the next München train is a long wait. **Local Risk answers "which connection should I watch"; Global Health answers "how bad is this route's tail."**
 
 ### 3.1 Missed-Connection Probability (per transfer)
 
@@ -190,7 +211,7 @@ Route search finds every mathematically valid path with no notion of whether it'
 
 `pipelines.route_filters.apply_sanity_filter(routes, max_duration_ratio, max_additional_minutes)` (values: §6) drops any candidate whose scheduled duration exceeds the *tighter* of two bounds against the *fastest* duration in that search result — a ratio bound and a flat-minutes bound, both relative to what was actually found. Applied once to the top-level result, before display-limit slicing (§5.1) and before simulation.
 
-**Why two bounds and not one.** A pure ratio shipped first, then a sweep over every connected station pair showed why it isn't enough. Detour explosion is overwhelmingly a *short*-trip problem: pairs whose fastest route is under 60 min had a median worst-case ratio of 15.2x and reached 458x, while pairs over 240 min stayed tame (median 1.4x, none even reaching 2.5x) because the 2-transfer cap and real corridor connectivity bound how convoluted a long route can get.
+**Why two bounds and not one.** *(Background — the evidence behind §6's two values. Skip unless you're retuning them.)* A pure ratio shipped first, then a sweep over every connected station pair showed why it isn't enough. Detour explosion is overwhelmingly a *short*-trip problem: pairs whose fastest route is under 60 min had a median worst-case ratio of 15.2x and reached 458x, while pairs over 240 min stayed tame (median 1.4x, none even reaching 2.5x) because the 2-transfer cap and real corridor connectivity bound how convoluted a long route can get.
 
 That tameness is the trap. On a long trip a genuinely unacceptable detour barely registers as a ratio — Nürnberg Hbf → Hannover Hbf (fastest 4h00m) has a legitimate alternative cluster up to 6h36m and a separate detour cluster at 8h03m–10h03m, yet the whole detour cluster sits between 2.01x and 2.51x, so a 2.5x cap caught only the worst of seven. Six hours of avoidable travel is obviously unreasonable in absolute terms and unremarkable in relative ones, which is what the flat +150 min ceiling catches. It costs nothing on short trips, where the ratio is already the tighter bound: a re-sweep confirmed zero additional drops in the under-60-min bucket.
 
@@ -206,9 +227,15 @@ Every backend's job ends at producing `Station`/`Line`/`Leg`/`Transfer`/`Route` 
 
 ### 4.2 The Three Backends
 
-- **Mock** (Phase 1, §7) — `mock_data.json`, hand-authored fixture, loaded whole. `DATA_SPEC.md` §7.
-- **Snapshot** (Phase 2, §7) — `data/real_dataset.json`, a GTFS.DE + piebro-delay pipeline output baked to one fixed calendar date, loaded whole. `DATA_SPEC.md` §7.
-- **Warehouse** (Phase 3, §7 — default) — `data/warehouse.duckdb`, date-agnostic templates + GTFS calendar, queried per-search for any date in the ingested window. `DATA_SPEC.md` §6.
+The three names are *runtime* labels — what you pick in the sidebar. They line up one-to-one with the development phases that produced them (§7), which is why both vocabularies appear throughout the specs:
+
+| Backend | Built in | Storage | Dates it can answer for | Detail |
+|---|---|---|---|---|
+| **Mock** | Phase 1 | `mock_data.json`, loaded whole | Whatever the fixture hardcodes | `DATA_SPEC.md` §7 |
+| **Snapshot** | Phase 2 | `data/real_dataset.json`, loaded whole | One, fixed at build time | `DATA_SPEC.md` §7 |
+| **Warehouse** *(default)* | Phase 3 | `data/warehouse.duckdb`, queried per search | Any date in the ingested window | `DATA_SPEC.md` §6 |
+
+Reading the table top to bottom is also the project's arc: a hand-authored fixture, then real data pinned to one day, then real data queryable by date.
 
 **Missing-data degradation.** Only `mock_data.json` is committed; both real datasets are gitignored build outputs. If the selected backend's file is absent, `app.py` shows a sidebar warning naming the build command and falls back to Mock rather than erroring. This matters on a fresh clone or deploy: without running `python -m pipelines.build_warehouse`, the app boots and works, but on fixture data — check the sidebar warning before reading anything into the results.
 

@@ -1,14 +1,13 @@
 # DB Risk & Rescue — Data Architecture Specification
 
-**Companion to:** `SPEC.md` (product/algorithm spec, engine, and all threshold constants in §6) · `UIUX_SPEC.md` (UI/UX design). This document covers how data gets from source files into `engine.py`'s Pydantic contract (`SPEC.md` §2), across three generations of storage backend.
+**This document covers everything upstream of the engine:** how raw GTFS timetables and a historical delay archive become the `Station`/`Line`/`Leg`/`Transfer`/`Route` objects `engine.py` consumes. Read it if you're changing ingestion, the delay pipeline, route search, or the warehouse.
 
-**Status:** All three backends are implemented and selectable in `app.py` — Mock and Snapshot (JSON, §7) and Warehouse (DuckDB, §6). Backend ↔ phase mapping: `SPEC.md` §4.2.
+The quickest orientation is §2's component layout, then §3 (how a timetable becomes legs and transfers) and §4 (how delay history becomes probability distributions). §6 is the warehouse schema. New to the project? Start with [README.md](README.md).
 
-**Scope:** Offline-only. No live polling, no HAFAS or reverse-engineered sources — carried unchanged from Phase 2 into Phase 3 (`SPEC.md` §7).
+Two ground rules hold throughout. **Offline only** — committed fixtures and periodically-downloaded archives, never live polling or reverse-engineered APIs. And **the Pydantic contract is non-negotiable**: every pipeline here must produce output that validates against `models.py` as it stands. If a pipeline's output doesn't fit, the pipeline is wrong, not the model — any genuine gap gets raised in §10 rather than patched around.
 
 **Section map:** §1 Guiding Constraints & Scope · §2 Repository & Component Layout · §3 GTFS Topology Ingestion Pipeline · §4 Delay Distribution Pipeline · §5 Route Search & Candidate Generation · §6 DuckDB Warehouse Schema · §7 JSON Backends & Data Access Layer · §8 Build & Deployment Sequence · §9 Resolved Design Decisions · §10 Known Limitations.
-
-Every pipeline below produces output that validates against (or, for Phase 3, materializes into) `models.py`'s `MockDataset`/`Leg`/`Transfer`/`Route` — that contract is the hard boundary this document is built around. If a pipeline's output can't validate against it, the pipeline is wrong, not the model.
+**Status:** All three backends implemented and selectable in `app.py` — Mock and Snapshot (JSON, §7), Warehouse (DuckDB, §6). Backend ↔ phase mapping: `SPEC.md` §4.2.
 
 ## 1. Guiding Constraints & Scope
 
@@ -101,6 +100,8 @@ Both pipelines run against the same `leg_templates`/`legs`, so `classify_station
 Entirely date-independent — a delay distribution is a historical aggregate, not tied to a calendar date. This is why the DuckDB warehouse (§6) only needed to make *topology* dynamic; `delay_distributions` needed no date dimension at all.
 
 ### 4.1 Reading the piebro schema
+
+> *Background — skip unless you're modifying `delay_mapping.py`.* The evidence behind step 2's column choices.
 
 The archive's columns don't mean what their names suggest. Both findings below were measured against the downloaded ~14M-row Parquet rather than taken from the dataset card, and together they're what `delay_mapping.py` exists to translate.
 
@@ -217,6 +218,8 @@ Originally open questions, kept here so the reasoning stays visible for future r
 ### 9.1 Geographic/service scope
 
 Expanded past the original 11-station mock mirror to a 33-station "Golden 35" corridor (`id_crosswalk.py`) covering major ICE hubs, interchange points, and targeted connector stations — enough network for real routing complexity (multi-hop journeys, real transfer density) rather than disconnected point-to-point legs. Every `stop_id` in the crosswalk was looked up against the downloaded fv/rv feeds, not guessed.
+
+The two paragraphs below are *background* — skip them unless you're editing the crosswalk itself.
 
 **Split stations map many `stop_id`s to one `station_id`.** DELFI models multi-level stations as separate top-level parents rather than one node with sub-areas, so a single logical station often has two GTFS nodes — Frankfurt, Stuttgart, Leipzig and München each split surface/tunnel (`tief`/`oben`), Hamburg splits long-distance from S-Bahn, and Erfurt and Kassel-Wilhelmshöhe each carry a small secondary node. Name search alone finds these unreliably: Hamburg's S-Bahn node is `HBF/Kirchenallee` and München's is `Hauptbahnhof (U, Tram)` — neither contains its own city name. They were identified by tracing which parent `stop_id` the station-visit records actually use.
 

@@ -1,11 +1,13 @@
 # UI/UX Specification — DB Risk & Rescue
 
-**Status:** Finalized design system, implemented in `ui_components.py` (§5.4 confirms parity against the running code)
-**Source of truth mockup:** `design_mock.html`. §6 logs the individual design decisions and rejected alternatives behind it.
-**Companion docs:** `SPEC.md` (engine logic & all threshold constants, §6) · `DATA_SPEC.md` (data schema)
-**Scope:** Everything the user sees and touches — search form, route comparison list, expanded itinerary. Not the Monte Carlo engine or data pipeline (`SPEC.md`'s domain); where a visual decision depends on an engine-produced value, this doc names the value and defers computation to `engine.py`/`ui_components.py`.
+**This document governs everything the user sees and touches** — the search form, the route cards, the expanded itinerary. Read it if you're changing colours, wording, or layout.
+
+If you only read one section, make it **§2**: the five-state risk system is where most UI decisions actually get made, and its mapping table is the single source of truth for which phrase, colour and figure a transfer displays. §3 holds the design tokens, §4 the component structure. New to the project? Start with [README.md](README.md).
+
+This doc names engine-produced values but never computes them — thresholds and maths belong to `SPEC.md` (§6 for constants). `design_mock.html` is the reference mockup the visual system was built from.
 
 **Section map:** §1 Design Philosophy & Principles · §2 The Five-State Risk System · §3 Color Palette & Design Tokens · §4 Component Architecture · §5 Technical Implementation Notes · §6 Design History Log.
+**Status:** Implemented in `ui_components.py`; §5.4 confirms parity against the running code.
 
 ## 1. Design Philosophy & Principles
 
@@ -268,7 +270,9 @@ The button's own label is empty — the swap glyph is a Material Symbol icon (`s
 
 ## 6. Design History Log
 
-Kept for context — several rules above exist *because* an earlier approach was tried and didn't hold up. Check this list before reintroducing one.
+> **Non-normative — nothing here describes current behaviour.** This is a record of approaches that were tried and rejected, kept so they don't get retried. For what the UI actually does today, see §1–§5. Skip this section on a first read.
+
+Several rules above exist *because* an earlier approach didn't hold up; check this list before reintroducing one.
 
 1. **Standalone risk-color legend** — removed once wording became self-explanatory (§2.2); a legend explaining self-evident colors is clutter.
 2. **Bare "Low/Medium/High risk" labels** — rejected as ambiguous ("High" misreadable as high chance of success); replaced by action-first phrasing (§2.2).

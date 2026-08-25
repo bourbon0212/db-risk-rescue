@@ -1,4 +1,6 @@
-# DB Risk & Rescue - Developer Guidelines
+# DB Risk & Rescue — AI Agent Configuration
+
+> **Human contributors: start with [README.md](README.md).** This file is instructions for AI coding agents working in this repo — it's written in the second person, addressed to the agent. It's not an onboarding guide, and it deliberately duplicates nothing from the specs.
 
 ## Role
 
