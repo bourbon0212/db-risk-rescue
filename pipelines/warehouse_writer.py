@@ -17,9 +17,10 @@ from pipelines.calendar_ingest import ServiceCalendarException, ServiceCalendarR
 from pipelines.gtfs_ingest import LegTemplate, TransferTemplate, TripRecord
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS stations (
+CREATE OR REPLACE TABLE stations (
     station_id VARCHAR PRIMARY KEY,
-    name VARCHAR NOT NULL
+    name VARCHAR NOT NULL,
+    mct_minutes INTEGER NOT NULL DEFAULT 5
 );
 
 CREATE TABLE IF NOT EXISTS lines (
@@ -34,7 +35,7 @@ CREATE TABLE IF NOT EXISTS trips (
     service_id VARCHAR NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS leg_templates (
+CREATE OR REPLACE TABLE leg_templates (
     leg_id VARCHAR PRIMARY KEY,
     trip_id VARCHAR NOT NULL,
     line_id VARCHAR NOT NULL,
@@ -42,7 +43,9 @@ CREATE TABLE IF NOT EXISTS leg_templates (
     origin_station_id VARCHAR NOT NULL,
     destination_station_id VARCHAR NOT NULL,
     departure_seconds INTEGER NOT NULL,
-    arrival_seconds INTEGER NOT NULL
+    arrival_seconds INTEGER NOT NULL,
+    origin_platform VARCHAR,
+    destination_platform VARCHAR
 );
 
 CREATE TABLE IF NOT EXISTS transfer_templates (
@@ -137,8 +140,8 @@ def write_warehouse(
 
     _executemany(
         conn,
-        "INSERT INTO stations VALUES (?, ?)",
-        [(s.station_id, s.name) for s in stations],
+        "INSERT INTO stations VALUES (?, ?, ?)",
+        [(s.station_id, s.name, s.mct_minutes) for s in stations],
     )
     _executemany(
         conn,
@@ -152,7 +155,7 @@ def write_warehouse(
     )
     _executemany(
         conn,
-        "INSERT INTO leg_templates VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO leg_templates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 lt.leg_id,
@@ -163,6 +166,8 @@ def write_warehouse(
                 lt.destination_station_id,
                 lt.departure_seconds,
                 lt.arrival_seconds,
+                lt.origin_platform,
+                lt.destination_platform,
             )
             for lt in leg_templates
         ],

@@ -32,8 +32,10 @@ from pipelines.delay_aggregation import DEFAULT_MIN_SAMPLES, build_delay_distrib
 from pipelines.delay_mapping import load_piebro_delays
 from pipelines.gtfs_ingest import (
     LINE_TYPES,
+    MCT_STANDARD_MINUTES,
     LegTemplate,
     TransferTemplate,
+    classify_station_mct,
     derive_transfer_templates,
     parse_corridor_leg_templates,
     parse_leg_templates,
@@ -100,8 +102,25 @@ def _crosswalk_leg_templates(templates: list[LegTemplate]) -> list[LegTemplate]:
             destination_station_id=to_station_id(t.destination_station_id),
             departure_seconds=t.departure_seconds,
             arrival_seconds=t.arrival_seconds,
+            origin_platform=t.origin_platform,
+            destination_platform=t.destination_platform,
         )
         for t in templates
+    ]
+
+
+def _apply_station_mct(stations: list[Station], leg_templates: list[LegTemplate]) -> list[Station]:
+    """Attach each Station's tier-classified MCT (pipelines.gtfs_ingest.
+    classify_station_mct), computed from the final (post-crosswalk)
+    leg_templates so it's keyed on the same station_ids the Station objects
+    use. A station touched by no leg (shouldn't happen for a corridor
+    station, but cheap to guard) keeps the standard MCT."""
+    mct_by_station = classify_station_mct(
+        (lt.origin_station_id, lt.destination_station_id) for lt in leg_templates
+    )
+    return [
+        s.model_copy(update={"mct_minutes": mct_by_station.get(s.station_id, MCT_STANDARD_MINUTES)})
+        for s in stations
     ]
 
 
@@ -170,6 +189,7 @@ def build_warehouse(
     stations = _crosswalk_stations(stations)
     leg_templates = _crosswalk_leg_templates(leg_templates)
     transfer_templates = _crosswalk_transfer_templates(transfer_templates)
+    stations = _apply_station_mct(stations, leg_templates)
 
     write_warehouse(
         conn,
@@ -257,6 +277,7 @@ def build_real_warehouse(
     ]
 
     stations = [Station(station_id=sid, name=name) for sid, name in STATION_NAMES.items()]
+    stations = _apply_station_mct(stations, leg_templates)
 
     delay_parquet_path = _find_latest_delay_parquet(raw_dir)
     if delay_parquet_path is not None:

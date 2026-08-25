@@ -49,7 +49,7 @@ SELECT service_id FROM added
 
 _ORIGIN_LEGS_SQL = """
 SELECT lt.leg_id, lt.line_id, lt.origin_station_id, lt.destination_station_id,
-       lt.departure_seconds, lt.arrival_seconds
+       lt.departure_seconds, lt.arrival_seconds, lt.origin_platform, lt.destination_platform
 FROM leg_templates lt
 JOIN trips t ON t.trip_id = lt.trip_id
 WHERE lt.origin_station_id = ?
@@ -61,7 +61,7 @@ ORDER BY lt.departure_seconds
 _TRANSFERS_FROM_LEGS_SQL = """
 SELECT tt.from_leg_id, tt.transfer_id, tt.station_id, tt.buffer_minutes,
        lt.leg_id, lt.line_id, lt.origin_station_id, lt.destination_station_id,
-       lt.departure_seconds, lt.arrival_seconds
+       lt.departure_seconds, lt.arrival_seconds, lt.origin_platform, lt.destination_platform
 FROM transfer_templates tt
 JOIN trips t_from ON t_from.trip_id = tt.from_trip_id
 JOIN trips t_to ON t_to.trip_id = tt.to_trip_id
@@ -119,7 +119,10 @@ class _DistributionCache:
 def _materialize_leg(
     row: tuple, service_date: date, distributions: _DistributionCache
 ) -> Leg:
-    leg_id, line_id, origin_id, destination_id, departure_seconds, arrival_seconds = row
+    (
+        leg_id, line_id, origin_id, destination_id, departure_seconds, arrival_seconds,
+        origin_platform, destination_platform,
+    ) = row
     return Leg(
         leg_id=leg_id,
         line_id=line_id,
@@ -128,6 +131,8 @@ def _materialize_leg(
         scheduled_departure=_anchor_datetime(departure_seconds, service_date),
         scheduled_arrival=_anchor_datetime(arrival_seconds, service_date),
         delay_distribution_minutes=distributions.get(line_id),
+        origin_platform=origin_platform,
+        destination_platform=destination_platform,
     )
 
 

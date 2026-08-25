@@ -24,9 +24,12 @@ The shapes below are `models.py`'s Pydantic contract — the *only* interface `e
 ```json
 {
   "station_id": "DE_FRA_HBF",
-  "name": "Frankfurt(Main) Hbf"
+  "name": "Frankfurt(Main) Hbf",
+  "mct_minutes": 5
 }
 ```
+
+`mct_minutes` (default 5) is this station's Minimum Connection Time, assigned by station-tier classification at ingestion time (§3.6.1) — not looked up from the feed, since neither real GTFS.DE feed carries a per-station value. It lives on Station, not Transfer (§2.4), because it's a property of the physical station itself, independent of which two legs happen to be connecting through it on a given journey.
 
 ### 2.2 Line
 
@@ -56,15 +59,19 @@ A leg is one uninterrupted ride on one train. Delay behavior is modeled as an **
     "15": 0.12,
     "30": 0.06,
     "60": 0.02
-  }
+  },
+  "origin_platform": "7",
+  "destination_platform": "3"
 }
 ```
 
 Constraint: bucket probabilities for a leg must sum to 1.0. Buckets represent "delay is *at least* this many minutes" in cumulative-from-zero terms when read as a CDF (see §3.1).
 
+`origin_platform`/`destination_platform` (both nullable, default `null`) carry the GTFS `platform_code` for this leg's departure/arrival stop, where the feed provides one. Real GTFS.DE coverage is sparse overall and, at this corridor's major hubs specifically, close to 0% (confirmed against the real feed, §6.5) — most legs have `null` on one or both ends by design, not a parsing gap. `ui_components.py` only renders a platform pair in the transfer strip when both the arriving and departing leg have one; otherwise it's hidden entirely rather than shown as a placeholder.
+
 ### 2.4 Transfer
 
-A transfer connects the arrival of leg N to the departure of leg N+1 at a shared station. **Scheduled buffer only** — no separate Minimum Connection Time layer, no platform-change flag (§7).
+A transfer connects the arrival of leg N to the departure of leg N+1 at a shared station. `scheduled_buffer_minutes` itself stays a pure schedule fact — §3.1's analytic miss probability still reads it exactly as before. Minimum Connection Time is deliberately *not* a field here: it's a property of the station (§2.1's `mct_minutes`), not of any specific transfer through it, and is applied downstream by the engine (§3.6), not baked into this model.
 
 ```json
 {
@@ -171,6 +178,61 @@ Scope boundary: this is one level of re-routing. If a transfer *within* a fallba
 
 For the JSON backend specifically, `precompute_fallback_plans` also accepts an optional `search_indexes` — a `pipelines.route_search.build_route_search_indexes(dataset)` result (`legs_by_id`/`transfers_by_from_leg`) — passed straight through to its default `find_candidate_routes` call. Without it, every fallback sub-search rebuilt both lookup tables from scratch over the full dataset; a 5-route batch with 2 transfers each did that ~11 times over `real_dataset.json`'s ~6,000 legs / ~69,000 transfers. `app.py` builds these indexes once per search batch (`get_search_indexes`, cached per dataset path) and reuses them for the top-level search and every fallback sub-search — an O(1)-per-call-count optimization same as the batching above, just for the JSON path's index cost instead of the DuckDB path's query count.
 
+### 3.6 Minimum Connection Time (MCT) & the Gradient Risk Floor
+
+§2.4's `scheduled_buffer_minutes` captures the *scheduled* gap between two legs, but says nothing about whether a human can physically make that transfer even if both trains run exactly on time — a 3-minute change at a station whose platforms are hundreds of meters apart is unrealistic regardless of historical punctuality. Left unaddressed, a below-MCT transfer at a punctual line's station could render as `Safe connection` purely because §3.1's analytic miss probability never looks at the station at all. This section (formerly §7's proposed extension) closes that gap.
+
+#### 3.6.1 Station-tier MCT (the "5/10 minute rule")
+
+Every Station carries `mct_minutes` (§2.1), assigned at ingestion time by `pipelines.gtfs_ingest.classify_station_mct`. Neither real GTFS.DE feed (`gtfs_fv_latest.zip`, `gtfs_rv_latest.zip`) ships a `transfers.txt` or any other per-station `min_transfer_time` — confirmed by listing both archives directly — so this is a rule-based proxy, not feed data:
+
+- Count how many leg endpoints (as either origin or destination) touch each station across the ingested network — a cheap stand-in for interchange complexity/platform-walk distance in the absence of real platform geometry.
+- Stations at or above the 75th percentile of that touch-count distribution are classified **major hubs**: `mct_minutes = 10`.
+- Every other station gets `mct_minutes = 5` — the standard tier, and also what a Station without an explicit value defaults to (e.g. `mock_data.json`'s hand-authored fixture stations).
+
+An earlier proposal considered lowering these thresholds (10→5, 5→3) to make enforcement less aggressive. Rejected: the touch-count classifier is already only a proxy for interchange complexity, not real platform geometry, so shrinking the threshold throws away the one signal available (touch-count correlates with station size) without adding new information — it doesn't fix the actual problem, which §3.6.2 addresses instead.
+
+#### 3.6.2 Gradient risk floor, not a hard veto
+
+A transfer whose `scheduled_buffer_minutes` is below its station's `mct_minutes` is not rejected outright. Because the touch-count MCT proxy is approximate, treating "below MCT" as a binary impossibility would kill genuinely fine cross-platform transfers on nothing more than a coarse hub/standard split. Instead, `engine.mct_violation_floor(buffer_minutes, mct_minutes)` computes a floor that scales *linearly* with how far under MCT the buffer is:
+
+```
+deficit_fraction = clamp((mct_minutes - buffer_minutes) / mct_minutes, 0, 1)
+mct_floor         = deficit_fraction * MCT_VIOLATION_MAX_FLOOR   # 0.95
+```
+
+- Buffer at or above MCT: `deficit_fraction = 0` → no floor at all; purely §3.1's statistical miss probability.
+- Buffer 1 minute short of a 10-minute hub MCT: `deficit_fraction = 0.1` → floor = 0.095 — barely nudges the risk.
+- Buffer at 0 minutes (or negative) at that same hub: `deficit_fraction = 1.0` → floor = `MCT_VIOLATION_MAX_FLOOR` (0.95) — near-certain, regardless of how punctual the line's delay history is.
+
+The floor asymptotes at 0.95, never 1.0 — deliberately leaving room for a genuine cross-platform sprint the model has no way to rule out. A transfer's *effective* miss probability, used everywhere downstream (risk classification, §3.6.4's UI wording, `TransferRisk.miss_probability`), is `max(analytic_miss_probability (§3.1), mct_floor)`: the floor only ever raises the risk, never lowers a transfer that's already statistically worse than the floor on its own.
+
+A flat floor (e.g. a constant 0.85 whenever below MCT) was considered and rejected: it reintroduces the same cliff-edge problem a hard veto has, just at a lower height — a buffer 1 minute short of MCT would jump straight to 85% miss probability, identical to a buffer of 0 minutes. The gradient avoids that discontinuity entirely.
+
+#### 3.6.3 Monte Carlo integration
+
+The floor is not a display-time patch on top of §3.1's analytic number — it is enforced *inside* `simulate_route`'s per-iteration loop, so the simulated ETA (mean/P85/P90, §3.3) and the displayed risk percentage can never tell contradictory stories (e.g. a badge reading "82% risk" beside an "Expected: on time" ETA). Precomputed once per transfer before the loop starts — same "compute once, O(1) per iteration" discipline as §3.4's fallback plans:
+
+```
+extra_fail_probability = 0                                          if mct_floor <= analytic_miss_probability
+                                                                      or analytic_miss_probability >= 1.0
+                        = (mct_floor - analytic_miss_probability)
+                          / (1 - analytic_miss_probability)          otherwise
+```
+
+chosen so that, across many iterations, `P(overall miss) = analytic + (1 - analytic) * extra_fail_probability = max(analytic, mct_floor)` exactly. Per iteration, whenever the schedule check (§3.2 Step 2/3) says the connection *holds*, an additional Bernoulli draw against `extra_fail_probability` can still force a miss — representing "the train was on time, but the walk itself wasn't physically possible in the time available."
+
+This check applies only to the route's own transfers, never to a transfer *within* a precomputed fallback plan (§3.4) — scoped by the same `current_transfers is ordered_transfers` guard `simulate_route` already uses for its miss-count bookkeeping. It also costs zero extra random draws whenever `extra_fail_probability` is 0, which is always true when `simulate_route` is called without `stations_by_id` (every pre-existing caller) — a strict no-op that keeps prior behavior bit-for-bit reproducible.
+
+#### 3.6.4 UI wording: five phrases, no separate MCT text
+
+`TransferRisk.below_mct` (True whenever `scheduled_buffer_minutes < station.mct_minutes`) lets `ui_components.py` fold MCT into the existing five-phrase risk vocabulary (§5.3) without ever surfacing a standalone "MCT" caption or a second clause — full wording rules in `UIUX_SPEC.md` §1.4. Two rules, both silent about *why*:
+
+- **Band floor at the low tier.** A below-MCT connection can never display as "Safe connection," even when the numeric risk is too small on its own to cross the low/medium threshold: `ui_components.py` bumps the displayed band from low to medium in that case, landing on the same "Tight connection" phrase (and the same plain `Y min` trailing figure) a genuinely medium-risk connection gets. The cause isn't named because the passenger's action is identical either way — don't dawdle.
+- **Phrase fork at the high tier.** A below-MCT transfer that lands in the base-High band with no rescuing fallback plan (§3.4) reads as **"Unrealistic transfer,"** not "Miss likely" — here the cause *does* change what's actionable (whether hoping for an on-time train helps at all), so it earns its own phrase. When the Impact Override (§5.3) applies instead (a cheap fallback exists), the wording *stays* "Recoverable miss," unchanged and unforked — the reassuring, actionable fact outranks the diagnostic one.
+
+An earlier iteration surfaced MCT as a standalone `"below N min MCT"` caption appended to every band, plus a distinct "Rushed connection" phrase at the low/medium tier. Both were dropped: the caption put raw engineering jargon ("MCT") in front of passengers and violated this app's own single-clause rule (`UIUX_SPEC.md` §1.3); the extra phrase turned out to be indistinguishable from "Tight connection" in practice and, once the "does the cause change the action" test was applied, didn't earn its keep the way the high-tier fork does. See `UIUX_SPEC.md` §5 history for the full trail.
+
 ## 4. Storage & Data Access Architecture
 
 Three interchangeable backends produce the §2 contract; `app.py`'s sidebar picks between them. Full schema and pipeline detail: `DATA_SPEC.md`.
@@ -252,6 +314,8 @@ Selecting a card opens a **horizontal timeline**: leg → transfer → leg → t
 
 This exists to separate genuinely fatal transfers (a long, costly wait) from statistically-red-but-practically-harmless ones (a fast reroute, or a fallback that even arrives early, already covers the miss) — without it, the transfer strip flags every >30%-miss connection identically regardless of how bad actually missing it would be.
 
+**MCT augmentation.** Independently of the table above, §3.6's Minimum Connection Time gradient floor can push (or keep) a transfer's miss probability in a band the delay-distribution history alone wouldn't have reached. Two effects, at two tiers: at the Red band, when `TransferRisk.below_mct` is True and no Impact Override rescues it, the transfer displays as a distinct fifth phrase, `Unrealistic transfer`, instead of reusing `Miss likely` — the color/band math above is unchanged, only the wording differs, since the cause there is actionable (whether hoping for an on-time train helps at all). At the Green band, a below-MCT transfer is never left Green — it displays as `Tight connection` even when its numeric probability alone would round to Green — but *without* a distinct phrase or a wording change of any kind, since at that tier the cause doesn't change what the passenger should do. See §3.6.4 and `UIUX_SPEC.md` §1.4 for the full wording rules.
+
 This gives an at-a-glance risk story for that specific journey, complementing the Global Health signal from §5.2.
 
 **Implementation status:** both rules are wired in — `engine.py` exposes `impact_minutes` (`TransferRisk`) and `p85_penalty_minutes` (`RouteSimulationResult`) alongside the existing simulation outputs, and `ui_components.py` consumes them for the transfer-strip and card-edge coloring. One refinement beyond the rules as originally specified here: any base-Red transfer — not just one downgraded by the Impact Override — renders its trailing figure as the fallback's absolute arrival clock time rather than the scheduled buffer, since a base-Red transfer's buffer is uninformative regardless of whether the override fires (`UIUX_SPEC.md` §1.3, §5 history #16–#19).
@@ -280,7 +344,14 @@ Real-feed testing against the Phase 3 warehouse surfaced a data-completeness bug
 
 Combined effect, measured against the real corridor: a Leipzig→Munich search that previously surfaced nothing before 09:27 now finds a 07:26 departure, and a full search + 5-route simulate went from ~30s to ~2.15s.
 
-### 6.5 What's next
+### 6.5 Minimum Connection Time (MCT) & platform info
+
+A data audit against the real, downloaded GTFS.DE feeds (`gtfs_fv_latest.zip`, `gtfs_rv_latest.zip`) found: (a) no `transfers.txt`/`min_transfer_time` in either feed, and (b) a genuine `platform_code` column in `stops.txt`, but with close to 0% coverage at this corridor's 33 major-hub stations specifically (only Halle(Saale)Hbf had any). Both findings shaped what shipped:
+
+- **MCT**: a station-tier classifier (§3.6.1) plus a gradient risk floor (§3.6.2), enforced inside `simulate_route`'s own Monte Carlo loop (§3.6.3) rather than as a display-time patch, and a distinct "Unrealistic transfer" UI wording (§3.6.4, `UIUX_SPEC.md` §1.4) for the case a fallback can't rescue.
+- **Platform info**: `Leg.origin_platform`/`destination_platform` (§2.3), ingested from `stop_times.txt`'s platform-level `stop_id` wherever `platform_code` is populated. Given the near-0% real coverage at major hubs, the UI renders a platform pair only when both a transfer's arriving and departing leg have one, hiding gracefully rather than showing a placeholder for data that mostly doesn't exist.
+
+### 6.6 What's next
 
 See §7 for the current Phase 4+ candidate list.
 
@@ -289,7 +360,7 @@ See §7 for the current Phase 4+ candidate list.
 Carried forward from the original design consensus, plus candidates identified once Phase 3 was in production:
 
 - **Correlated delay sampling** — same-physical-train carryover between legs, and/or regional "bad day" latent factors shared across legs on the same network.
-- **Minimum Connection Time (MCT) and platform-aware transfer buffer times** — MCT as a station-level property distinct from scheduled buffer (to flag connections risky even with zero delay, e.g. tight platform changes at large hubs), and/or a lighter platform-change flag as a cheaper proxy. GTFS's `stop_times.txt` carries platform-level stop assignments the current `Transfer.scheduled_buffer_minutes` model discards; using them is the natural next step once MCT is prioritized.
+- **MCT proxy refinement & fallback-internal MCT** — §3.6 shipped station-tier MCT and a gradient risk floor for the primary route's own transfers (§6.5). Two things remain open: the touch-count classifier (§3.6.1) is a proxy for interchange complexity, not real platform geometry, and would be worth replacing with an actual platform-to-platform distance matrix if such data ever becomes available; and MCT enforcement today only covers the primary route's own transfers (§3.6) and a fallback candidate's *entry* connection (§3.4, still a hard veto there, deliberately not the gradient, since rejecting a discardable candidate route is a different decision than scoring a transfer that must be displayed) — a transfer *within* a fallback route's own path is not MCT-checked at all.
 - **Unbounded recursive re-routing** — §3.4 covers exactly one re-routing search per missed transfer; a miss *within* a fallback route still resolves via the same-line-headway wait rather than searching again.
 - **Advanced simulation controls** in the UI — exposing iteration count, risk-aversion weighting, or minimum acceptable buffer to the user.
 - **Full distribution histogram output** per route, instead of just mean + percentile band.

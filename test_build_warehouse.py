@@ -86,3 +86,21 @@ def test_rebuilding_does_not_duplicate_rows(conn):
     build_warehouse(conn, DEMO_GTFS_DIR, demo_historical_delays())
     assert _count(conn, "stations") == 3
     assert _count(conn, "leg_templates") == 6
+
+
+def test_stations_get_a_classified_mct(conn):
+    """Every station gets a tier-classified mct_minutes (5 or 10) rather
+    than a null/missing value -- fixtures/gtfs_smoke/ is too small for a
+    meaningful hub/standard split, but every row must still be a real int."""
+    rows = conn.execute("SELECT mct_minutes FROM stations").fetchall()
+    assert len(rows) == 3
+    assert all(row[0] in (5, 10) for row in rows)
+
+
+def test_leg_templates_platform_columns_exist_and_are_nullable(conn):
+    """fixtures/gtfs_smoke/stops.txt has no platform_code column at all --
+    the write path must still succeed, with every platform value NULL
+    rather than the build raising."""
+    rows = conn.execute("SELECT origin_platform, destination_platform FROM leg_templates").fetchall()
+    assert len(rows) == 6
+    assert all(origin is None and dest is None for origin, dest in rows)

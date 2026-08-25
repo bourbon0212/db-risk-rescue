@@ -33,6 +33,8 @@ from pipelines.delay_aggregation import DEFAULT_MIN_SAMPLES, build_delay_distrib
 from pipelines.delay_mapping import load_piebro_delays
 from pipelines.gtfs_ingest import (
     LINE_TYPES,
+    MCT_STANDARD_MINUTES,
+    classify_station_mct,
     derive_transfers,
     parse_corridor_legs,
     parse_legs,
@@ -119,6 +121,17 @@ def _apply_crosswalk(
     return _crosswalk_stations(stations), _crosswalk_legs(legs), _crosswalk_transfers(transfers)
 
 
+def _apply_station_mct(stations: list[Station], legs: list[Leg]) -> list[Station]:
+    """Attach each Station's tier-classified MCT (pipelines.gtfs_ingest.
+    classify_station_mct), computed from the final (post-crosswalk) legs so
+    it's keyed on the same station_ids the Station objects use."""
+    mct_by_station = classify_station_mct((leg.origin_station_id, leg.destination_station_id) for leg in legs)
+    return [
+        s.model_copy(update={"mct_minutes": mct_by_station.get(s.station_id, MCT_STANDARD_MINUTES)})
+        for s in stations
+    ]
+
+
 def _dedupe_legs(legs: list[Leg]) -> list[Leg]:
     """Drop legs that are exact duplicates of an earlier one (same line,
     stations, and times). GTFS.DE's feed occasionally carries two different
@@ -165,6 +178,7 @@ def build_dataset(
         raise ValueError(f"Lines with invalid type reached build_dataset: {bad_types}")
 
     stations, legs, transfers = _apply_crosswalk(stations, legs, transfers)
+    stations = _apply_station_mct(stations, legs)
 
     distributions = build_delay_distributions(historical_delays, min_samples=min_samples)
     missing = sorted({leg.line_id for leg in legs} - set(distributions))
@@ -275,6 +289,7 @@ def build_real_dataset(
     lines = [line for line in lines if line.line_id in used_line_ids]
 
     stations = [Station(station_id=sid, name=name) for sid, name in STATION_NAMES.items()]
+    stations = _apply_station_mct(stations, legs)
 
     delay_parquet_path = _find_latest_delay_parquet(raw_dir)
     if delay_parquet_path is not None:

@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from models import Leg, Line, MockDataset, Route, Transfer
+from models import Leg, Line, MockDataset, Route, Station, Transfer
 from pipelines.route_search import find_candidate_routes
 
 # SPEC.md §2.6 — static lookup, not part of the mock JSON.
@@ -57,6 +57,7 @@ def precompute_fallback_plans(
     transfers_by_id: dict[str, Transfer],
     route_search_fn: Callable[[str, str, datetime], list[Route]] | None = None,
     search_indexes: tuple[dict[str, Leg], dict[str, list[Transfer]]] | None = None,
+    stations_by_id: dict[str, Station] | None = None,
 ) -> dict[str, FallbackPlan | None]:
     """SPEC.md §3.4 — one fallback lookup per transfer node in `route`,
     computed once before the Monte Carlo loop so a missed connection is an
@@ -87,6 +88,15 @@ def precompute_fallback_plans(
     caller running several routes' worth of fallback searches against the
     same dataset in one batch can share one pair of indexes instead of each
     sub-search rebuilding them. Ignored when route_search_fn is given.
+
+    `stations_by_id`, if given, enables station-level Minimum Connection
+    Time enforcement (SPEC.md §7's proposed MCT extension): a candidate
+    whose first leg departs less than the stranded station's mct_minutes
+    after the upstream leg's own scheduled arrival is rejected outright, so
+    a physically-implausible dash across a large hub (e.g. a 2-minute
+    "connection" at a station whose real MCT is 10) is never offered as a
+    fallback. Left as None (the default), no MCT filtering is applied,
+    reproducing the original behavior exactly.
     """
     ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
     ordered_transfers = [transfers_by_id[t_id] for t_id in route.transfers]
@@ -99,8 +109,12 @@ def precompute_fallback_plans(
 
     plans: dict[str, FallbackPlan | None] = {}
     for i, transfer in enumerate(ordered_transfers):
+        upstream_leg = ordered_legs[i]
         downstream_leg = ordered_legs[i + 1]
         remaining_budget = MAX_TOTAL_TRANSFERS - (i + 1)
+
+        station = stations_by_id.get(transfer.station_id) if stations_by_id else None
+        mct_minutes = station.mct_minutes if station is not None else 0
 
         candidates = search(
             transfer.station_id,
@@ -116,6 +130,13 @@ def precompute_fallback_plans(
             # departed without the passenger. Fall through to the static
             # same-line-headway wait for that case instead.
             and c.legs[0] != downstream_leg.leg_id
+            # MCT enforcement: the candidate's own entry connection -- from
+            # the upstream leg's scheduled arrival to this candidate's first
+            # leg's departure -- must clear the station's Minimum Connection
+            # Time, same as any other transfer's buffer, or it's rejected.
+            and (
+                legs_by_id[c.legs[0]].scheduled_departure - upstream_leg.scheduled_arrival
+            ).total_seconds() / 60 >= mct_minutes
         ]
 
         if not candidates:
@@ -143,6 +164,11 @@ def transfer_miss_probability(upstream_leg: Leg, transfer: Transfer) -> float:
     """SPEC.md §3.1 — analytic CDF lookup against the upstream leg's distribution.
 
     P(miss) = P(delay_from_leg > scheduled_buffer_minutes)
+
+    Purely statistical -- this never looks at a station's MCT (see
+    mct_violation_floor below for that). Kept unchanged/unfloored so its
+    existing worked-example tests stay exact; simulate_route blends the MCT
+    floor in separately, at the point where a TransferRisk is built.
     """
     buffer = transfer.scheduled_buffer_minutes
     return sum(
@@ -150,6 +176,52 @@ def transfer_miss_probability(upstream_leg: Leg, transfer: Transfer) -> float:
         for bucket_str, prob in upstream_leg.delay_distribution_minutes.items()
         if int(bucket_str) > buffer
     )
+
+
+# SPEC.md §7's MCT extension: a below-MCT transfer's *effective* miss
+# probability is never allowed to read as literal certainty (1.0) -- there's
+# always some chance of a genuine cross-platform sprint -- so the gradient
+# floor asymptotes at this ceiling instead of 1.0.
+MCT_VIOLATION_MAX_FLOOR = 0.95
+
+
+def mct_violation_floor(buffer_minutes: int, mct_minutes: int) -> float:
+    """SPEC.md §7 — a gradient (not cliff-edge) floor on miss probability for
+    a transfer whose scheduled buffer is below its station's Minimum
+    Connection Time.
+
+    Scales linearly from 0 (buffer at or above mct_minutes -- no floor
+    applied at all) up to MCT_VIOLATION_MAX_FLOOR (buffer at or below zero
+    minutes -- treated as near-certain regardless of how punctual the
+    upstream line historically is). A buffer just 1 minute short of a
+    10-minute hub MCT barely nudges the risk; a 0-minute "connection" at
+    that same hub dominates it, deliberately avoiding the binary "impossible
+    vs. fine" cliff a flat threshold/flat floor would both produce.
+    """
+    if mct_minutes <= 0:
+        return 0.0
+    deficit_fraction = min(max(mct_minutes - buffer_minutes, 0) / mct_minutes, 1.0)
+    return deficit_fraction * MCT_VIOLATION_MAX_FLOOR
+
+
+def _mct_extra_fail_probability(analytic_miss_probability: float, mct_floor: float) -> float:
+    """The extra per-iteration Bernoulli probability of forcing a miss on an
+    iteration that already held by schedule, chosen so the overall (natural
+    + forced) miss rate converges to max(analytic_miss_probability,
+    mct_floor) exactly:
+
+        P(overall miss) = A + (1 - A) * P(extra | held) = max(A, F)
+        => P(extra | held) = max(F - A, 0) / (1 - A)
+
+    Returns 0 whenever the floor doesn't bind (F <= A) or A is already 1.0
+    (nothing left to force), so passing mct_minutes=None/no station is a
+    strict no-op that consumes zero extra random draws in the caller's loop
+    -- this is what keeps every pre-existing (no stations_by_id) call to
+    simulate_route bit-for-bit reproducible.
+    """
+    if mct_floor <= analytic_miss_probability or analytic_miss_probability >= 1.0:
+        return 0.0
+    return (mct_floor - analytic_miss_probability) / (1.0 - analytic_miss_probability)
 
 
 def transfer_impact_minutes(
@@ -209,6 +281,12 @@ class TransferRisk:
     miss_probability: float
     simulated_miss_rate: float
     impact_minutes: float
+    # SPEC.md §7 — True when this transfer's scheduled buffer is below its
+    # station's MCT, i.e. miss_probability may include the gradient floor
+    # rather than being purely statistical. ui_components.py uses this to
+    # pick "Unrealistic transfer" wording instead of "Miss likely" when the
+    # floor is the dominant reason and no fallback rescues it.
+    below_mct: bool = False
 
 
 @dataclass
@@ -231,6 +309,7 @@ def simulate_route(
     n_iterations: int = 1000,
     rng: random.Random | None = None,
     fallback_plans: dict[str, FallbackPlan | None] | None = None,
+    stations_by_id: dict[str, Station] | None = None,
 ) -> RouteSimulationResult:
     """SPEC.md §3.2 — Monte Carlo simulation of a route's realized arrival time.
 
@@ -240,6 +319,17 @@ def simulate_route(
     onto the fallback route's legs/transfers for its remainder instead of
     waiting for the next same-line departure. Omitting it (the default)
     reproduces the original §3.2 Step 4 behavior exactly.
+
+    `stations_by_id`, if given, enables SPEC.md §7's MCT gradient floor for
+    the route's own transfers (not fallback-internal ones -- see
+    precompute_fallback_plans for those): each transfer's *effective* miss
+    probability becomes max(analytic, mct_violation_floor(...)), and the
+    per-iteration loop is given a matching extra chance to force a miss on
+    an iteration that held by schedule, so the simulated ETA and the
+    displayed risk % can never tell contradictory stories. Left as None
+    (the default), every transfer's extra-fail probability is exactly 0 and
+    zero extra random draws are consumed, reproducing prior behavior
+    bit-for-bit (see _mct_extra_fail_probability).
     """
     if rng is None:
         rng = random.Random()
@@ -261,6 +351,28 @@ def simulate_route(
                 f"{ordered_legs[i].leg_id} -> {ordered_legs[i + 1].leg_id}"
             )
 
+    # SPEC.md §7 — per-transfer MCT gradient, computed once up front (not
+    # per iteration): analytic_miss_probability is the untouched statistical
+    # figure (transfer_miss_probability); effective_miss_probability folds
+    # in the floor for display/classification; extra_fail_probability is
+    # what the loop below draws against so the simulated outcomes actually
+    # match effective_miss_probability, not just the analytic figure.
+    below_mct_flags: list[bool] = []
+    effective_miss_probabilities: list[float] = []
+    extra_fail_probabilities: list[float] = []
+    for i, transfer in enumerate(ordered_transfers):
+        analytic = transfer_miss_probability(ordered_legs[i], transfer)
+        station = stations_by_id.get(transfer.station_id) if stations_by_id else None
+        below_mct = station is not None and transfer.scheduled_buffer_minutes < station.mct_minutes
+        floor = (
+            mct_violation_floor(transfer.scheduled_buffer_minutes, station.mct_minutes)
+            if below_mct
+            else 0.0
+        )
+        below_mct_flags.append(below_mct)
+        effective_miss_probabilities.append(max(analytic, floor))
+        extra_fail_probabilities.append(_mct_extra_fail_probability(analytic, floor))
+
     simulated_arrivals: list[datetime] = []
     miss_counts = [0] * len(ordered_transfers)
 
@@ -280,7 +392,24 @@ def simulate_route(
             transfer = current_transfers[leg_idx]
             downstream_leg = current_legs[leg_idx + 1]
 
-            if realized_arrival <= downstream_leg.scheduled_departure:
+            connection_holds = realized_arrival <= downstream_leg.scheduled_departure
+            # SPEC.md §7 — an MCT-forced miss only ever applies to the
+            # original route's own transfers (current_transfers is
+            # ordered_transfers), same scoping as miss_counts above:
+            # fallback-internal transfers aren't MCT-checked here (that's
+            # precompute_fallback_plans' entry-buffer check, a separate
+            # concern). extra_fail_probabilities[leg_idx] is exactly 0 for
+            # every pre-existing (no stations_by_id) call, so rng.random()
+            # is never drawn in that case -- the random stream is untouched.
+            if (
+                connection_holds
+                and current_transfers is ordered_transfers
+                and extra_fail_probabilities[leg_idx] > 0
+                and rng.random() < extra_fail_probabilities[leg_idx]
+            ):
+                connection_holds = False
+
+            if connection_holds:
                 # Step 3: connection holds — downstream leg departs on schedule.
                 delay = sample_delay_minutes(downstream_leg.delay_distribution_minutes, rng)
                 realized_arrival = downstream_leg.scheduled_arrival + timedelta(minutes=delay)
@@ -323,11 +452,12 @@ def simulate_route(
     transfer_risks = [
         TransferRisk(
             transfer_id=transfer.transfer_id,
-            miss_probability=transfer_miss_probability(ordered_legs[i], transfer),
+            miss_probability=effective_miss_probabilities[i],
             simulated_miss_rate=miss_counts[i] / n_iterations,
             impact_minutes=transfer_impact_minutes(
                 transfer, ordered_legs[i + 1], route, lines_by_id, fallback_plans
             ),
+            below_mct=below_mct_flags[i],
         )
         for i, transfer in enumerate(ordered_transfers)
     ]

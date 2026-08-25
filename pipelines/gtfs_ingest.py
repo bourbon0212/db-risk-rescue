@@ -4,7 +4,9 @@ Per DATA_SPEC.md Section 3 and Section 8 (build sequence steps 1-2).
 """
 
 import csv
+import math
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -24,6 +26,47 @@ _ROUTE_TYPE_FALLBACK = {
     "103": "IC",  # Inter Regional Rail Service
     "109": "S-Bahn",  # Suburban Railway
 }
+
+# SPEC.md §7's proposed Minimum Connection Time extension. Neither real
+# GTFS.DE feed (gtfs_fv_latest.zip, gtfs_rv_latest.zip) ships a transfers.txt
+# or any other per-station min_transfer_time -- confirmed by listing both
+# archives directly -- so MCT here is a rule-based proxy, not feed data.
+MCT_STANDARD_MINUTES = 5
+MCT_MAJOR_HUB_MINUTES = 10
+# Stations at or above this percentile of leg-endpoint touch-count get the
+# major-hub MCT; the rest get the standard one.
+_MAJOR_HUB_TOUCH_PERCENTILE = 75
+
+
+def classify_station_mct(station_touch_pairs: Iterable[tuple[str, str]]) -> dict[str, int]:
+    """Station-tier MCT classifier, built from trip-touch counts.
+
+    `station_touch_pairs` is any iterable of (origin_station_id,
+    destination_station_id) pairs -- one per Leg or LegTemplate -- so the
+    same classifier serves both the Phase 2 (Leg) and Phase 3 (LegTemplate)
+    build paths without depending on either type. How many leg endpoints (as
+    either origin or destination) touch a station is a cheap, data-driven
+    stand-in for its interchange complexity/platform-walk distance in the
+    absence of any real per-station signal. Stations at or above the 75th
+    percentile of that distribution get MCT_MAJOR_HUB_MINUTES; everyone else
+    gets MCT_STANDARD_MINUTES.
+    """
+    touch_counts: dict[str, int] = defaultdict(int)
+    for origin_id, destination_id in station_touch_pairs:
+        touch_counts[origin_id] += 1
+        touch_counts[destination_id] += 1
+
+    if not touch_counts:
+        return {}
+
+    sorted_counts = sorted(touch_counts.values())
+    threshold_idx = math.ceil(_MAJOR_HUB_TOUCH_PERCENTILE / 100 * len(sorted_counts)) - 1
+    threshold = sorted_counts[min(max(threshold_idx, 0), len(sorted_counts) - 1)]
+
+    return {
+        station_id: MCT_MAJOR_HUB_MINUTES if count >= threshold else MCT_STANDARD_MINUTES
+        for station_id, count in touch_counts.items()
+    }
 
 
 def _normalize_line_type(route_short_name: str, route_type: str) -> str:
@@ -157,6 +200,26 @@ def _load_stop_to_station_map(gtfs_dir: Path) -> dict[str, str]:
     return mapping
 
 
+def _load_stop_to_platform_map(gtfs_dir: Path) -> dict[str, str]:
+    """Map every GTFS stop_id to its platform_code, "" if blank or the
+    column is absent entirely (older/smaller fixtures).
+
+    Real GTFS.DE coverage is sparse -- ~14% of stops nationally, and close
+    to 0% at this corridor's major hubs specifically (confirmed against the
+    real feed) -- so most legs end up with no platform on one or both ends.
+    That's the real data, not a parsing gap; see _platform_or_none.
+    """
+    mapping: dict[str, str] = {}
+    with (gtfs_dir / "stops.txt").open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            mapping[row["stop_id"]] = row.get("platform_code", "").strip()
+    return mapping
+
+
+def _platform_or_none(stop_to_platform: dict[str, str], stop_id: str) -> str | None:
+    return stop_to_platform.get(stop_id, "").strip() or None
+
+
 def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
     """Walk each trip's stop_times in sequence, turning every consecutive
     stop pair into a Leg (DATA_SPEC.md §3 step 5).
@@ -165,6 +228,7 @@ def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
     (delay_aggregation.py) overwrites it with real empirical distributions.
     """
     stop_to_station = _load_stop_to_station_map(gtfs_dir)
+    stop_to_platform = _load_stop_to_platform_map(gtfs_dir)
     route_line_ids = _load_route_line_ids(gtfs_dir)
 
     trip_to_line: dict[str, str] = {}
@@ -194,6 +258,8 @@ def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
                     ),
                     scheduled_arrival=_parse_gtfs_time(dest_row["arrival_time"], service_date),
                     delay_distribution_minutes={"0": 1.0},
+                    origin_platform=_platform_or_none(stop_to_platform, origin_row["stop_id"]),
+                    destination_platform=_platform_or_none(stop_to_platform, dest_row["stop_id"]),
                 )
             )
     return legs
@@ -225,6 +291,8 @@ class LegTemplate:
     destination_station_id: str
     departure_seconds: int
     arrival_seconds: int
+    origin_platform: str | None = None
+    destination_platform: str | None = None
 
 
 @dataclass(frozen=True)
@@ -267,6 +335,7 @@ def parse_leg_templates(gtfs_dir: Path) -> list[LegTemplate]:
     is unchanged and still backs the Phase 1/2 single-date JSON build.
     """
     stop_to_station = _load_stop_to_station_map(gtfs_dir)
+    stop_to_platform = _load_stop_to_platform_map(gtfs_dir)
     route_line_ids = _load_route_line_ids(gtfs_dir)
 
     trip_to_line: dict[str, str] = {}
@@ -295,6 +364,8 @@ def parse_leg_templates(gtfs_dir: Path) -> list[LegTemplate]:
                     destination_station_id=stop_to_station[dest_row["stop_id"]],
                     departure_seconds=_seconds_since_midnight(origin_row["departure_time"]),
                     arrival_seconds=_seconds_since_midnight(dest_row["arrival_time"]),
+                    origin_platform=_platform_or_none(stop_to_platform, origin_row["stop_id"]),
+                    destination_platform=_platform_or_none(stop_to_platform, dest_row["stop_id"]),
                 )
             )
     return templates
@@ -313,6 +384,8 @@ class _CorridorLegRow:
     destination_station_id: str
     origin_departure_time: str
     destination_arrival_time: str
+    origin_platform: str | None
+    destination_platform: str | None
 
 
 def _walk_corridor_legs(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[_CorridorLegRow]:
@@ -335,6 +408,7 @@ def _walk_corridor_legs(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[_Co
     still storing only real corridor stops as leg endpoints.
     """
     stop_to_station = _load_stop_to_station_map(gtfs_dir)
+    stop_to_platform = _load_stop_to_platform_map(gtfs_dir)
     route_line_ids = _load_route_line_ids(gtfs_dir)
 
     trip_to_line: dict[str, str] = {}
@@ -363,6 +437,8 @@ def _walk_corridor_legs(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[_Co
                     destination_station_id=stop_to_station[dest_row["stop_id"]],
                     origin_departure_time=origin_row["departure_time"],
                     destination_arrival_time=dest_row["arrival_time"],
+                    origin_platform=_platform_or_none(stop_to_platform, origin_row["stop_id"]),
+                    destination_platform=_platform_or_none(stop_to_platform, dest_row["stop_id"]),
                 )
             )
     return corridor_rows
@@ -381,6 +457,8 @@ def parse_corridor_legs(gtfs_dir: Path, service_date: date, corridor_stop_ids: s
             scheduled_departure=_parse_gtfs_time(r.origin_departure_time, service_date),
             scheduled_arrival=_parse_gtfs_time(r.destination_arrival_time, service_date),
             delay_distribution_minutes={"0": 1.0},
+            origin_platform=r.origin_platform,
+            destination_platform=r.destination_platform,
         )
         for r in _walk_corridor_legs(gtfs_dir, corridor_stop_ids)
     ]
@@ -400,6 +478,8 @@ def parse_corridor_leg_templates(gtfs_dir: Path, corridor_stop_ids: set[str]) ->
             destination_station_id=r.destination_station_id,
             departure_seconds=_seconds_since_midnight(r.origin_departure_time),
             arrival_seconds=_seconds_since_midnight(r.destination_arrival_time),
+            origin_platform=r.origin_platform,
+            destination_platform=r.destination_platform,
         )
         for r in _walk_corridor_legs(gtfs_dir, corridor_stop_ids)
     ]

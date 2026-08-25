@@ -33,6 +33,11 @@ RISK_WORDING = {"low": "Safe connection", "medium": "Tight connection", "high": 
 # Impact Override (SPEC.md §5.3), so a high probability is never relabeled
 # with the genuine-Medium phrase.
 RISK_WORDING_OVERRIDE = "Recoverable miss"
+# SPEC.md §3.6.4 — distinct phrase for a base-Red transfer driven by the MCT
+# gradient floor (engine.TransferRisk.below_mct) with no rescuing fallback:
+# the cause is a physical connection time, not a statistical delay history,
+# so it must never share wording with "Miss likely".
+RISK_WORDING_MCT_VIOLATION = "Unrealistic transfer"
 # SPEC.md §5.3 — a base-Red transfer downgrades to Yellow when its precomputed
 # fallback impact is at or under this many minutes.
 IMPACT_OVERRIDE_THRESHOLD_MINUTES = 15
@@ -265,6 +270,7 @@ def inject_global_styles() -> None:
         .transfer-bar{{border-radius:7px; padding:9px 12px; margin:3px 0; align-self:center; display:flex; align-items:center; gap:8px; flex-wrap:wrap;}}
         .transfer-bar .t-headline{{font-size:12.5px; font-weight:700;}}
         .transfer-bar .t-buffer{{font-size:12px; font-weight:400; opacity:.75;}}
+        .transfer-bar .t-platform{{font-size:12px; font-weight:400; opacity:.75;}}
         .risk-low{{background:var(--low-bg); color:var(--low-text);}}
         .risk-medium{{background:var(--med-bg); color:var(--med-text);}}
         .risk-high{{background:var(--high-bg); color:var(--high-text);}}
@@ -439,25 +445,66 @@ def _itinerary_html(
         )
 
         if not is_last_leg:
+            downstream_leg = ordered_legs[i + 1]
             transfer_id = route.transfers[i]
             transfer = transfers_by_id[transfer_id]
             risk = risk_by_transfer_id[transfer_id]
             risk_level, is_override = classify_local_risk(risk.miss_probability, risk.impact_minutes)
-            phrase = RISK_WORDING_OVERRIDE if is_override else RISK_WORDING[risk_level]
+            # SPEC.md §3.6.4 — a below-MCT connection can never read as fully
+            # "Safe": even when engine.py's gradient floor is too small to
+            # push the numeric probability past the low/medium threshold on
+            # its own, a scheduled buffer under the station's MCT still
+            # deserves at least a "pay attention" band. This band floor is
+            # deliberately silent about *why* -- the passenger's action
+            # (don't dawdle) is identical whether the cause is delay history
+            # or station size, so it folds into the existing "Tight
+            # connection" phrase rather than earning a separate word.
+            if risk.below_mct and risk_level == "low":
+                risk_level = "medium"
+            # A below-MCT transfer that lands base-High with no rescuing
+            # fallback is a *physical* impossibility, not a statistical one:
+            # the headline says so instead of "Miss likely". When the Impact
+            # Override applies instead (a cheap fallback exists), it stays
+            # "Recoverable miss" -- the reassuring, actionable truth wins
+            # over the diagnostic one when both are true (SPEC.md §3.6.4,
+            # UIUX_SPEC.md §1.4).
+            is_mct_violation = risk.below_mct and risk_level == "high" and not is_override
+            phrase = (
+                RISK_WORDING_MCT_VIOLATION
+                if is_mct_violation
+                else RISK_WORDING_OVERRIDE if is_override else RISK_WORDING[risk_level]
+            )
             # UIUX_SPEC.md §1.3 — any base-Red transfer (Miss likely *or* a
             # downgraded Recoverable miss) shows the fallback arrival instead
             # of the scheduled buffer: a base-Red transfer's own buffer is by
             # definition tight, so it'd just restate "this is risky" rather
             # than answer the question that actually matters once a miss is
             # the likely outcome -- what happens if it's missed. Buffer stays
-            # for Safe/Tight, where the connection is expected to hold and
-            # "how much slack" is the relevant framing.
+            # for Safe/Tight (including a below-MCT connection folded into
+            # Tight above), where the connection is expected to hold and
+            # "how much slack" is the relevant framing -- deliberately the
+            # same plain minutes figure regardless of cause, per SPEC.md
+            # §3.6.4: a comparison figure here was tried and rejected as
+            # requiring context ("10 of what?") no passenger has in hand.
             is_base_high = classify_risk(risk.miss_probability) == "high"
             minutes_label = (
                 _fallback_arrival_label(route.scheduled_arrival, risk.impact_minutes)
                 if is_base_high
                 else f"{transfer.scheduled_buffer_minutes} min"
             )
+            # Platform info (SPEC.md §7's proposed extension): real GTFS.DE
+            # platform_code coverage is sparse and, at this corridor's major
+            # hubs specifically, close to 0% (confirmed against the real
+            # feed) -- shown only when both the arriving and departing leg
+            # actually have one, hidden gracefully otherwise rather than
+            # printing a placeholder for missing data.
+            platform_html = ""
+            if leg.destination_platform and downstream_leg.origin_platform:
+                platform_html = (
+                    '<span class="t-platform">Plat. '
+                    f"{leg.destination_platform} → Plat. {downstream_leg.origin_platform}"
+                    "</span>"
+                )
             rows.append(
                 '<div style="display:contents;">'
                 '<div class="tt-time"></div>'
@@ -465,6 +512,7 @@ def _itinerary_html(
                 f'<div class="transfer-bar risk-{risk_level}">'
                 f'<span class="t-headline">{phrase} ({risk.miss_probability:.0%} risk)</span>'
                 f'<span class="t-buffer">·  {minutes_label}</span>'
+                f"{platform_html}"
                 "</div></div>"
             )
 

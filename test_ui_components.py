@@ -17,6 +17,7 @@ from models import Leg, Line, Route, Station, Transfer
 from ui_components import (
     IMPACT_OVERRIDE_THRESHOLD_MINUTES,
     RISK_WORDING,
+    RISK_WORDING_MCT_VIOLATION,
     RISK_WORDING_OVERRIDE,
     _fallback_arrival_label,
     _itinerary_html,
@@ -99,6 +100,11 @@ def test_override_phrase_is_distinct_from_every_base_band_phrase():
     assert RISK_WORDING_OVERRIDE not in RISK_WORDING.values()
 
 
+def test_mct_violation_phrase_is_distinct_from_every_other_phrase():
+    assert RISK_WORDING_MCT_VIOLATION not in RISK_WORDING.values()
+    assert RISK_WORDING_MCT_VIOLATION != RISK_WORDING_OVERRIDE
+
+
 # ---------------------------------------------------------------------------
 # UIUX_SPEC.md §1.3 / §5 (history #16-#18) — the fallback arrival figure
 # shows an absolute clock time, deliberately distinct from Safe/Tight's bare
@@ -132,7 +138,7 @@ def test_fallback_arrival_label_zero_impact_matches_scheduled_arrival_exactly():
     assert f"{_SCHEDULED_ARRIVAL:%H:%M}" in label
 
 
-def _single_transfer_route_fixtures(miss_probability: float, impact_minutes: float):
+def _single_transfer_route_fixtures(miss_probability: float, impact_minutes: float, below_mct: bool = False):
     """Minimal A -> B -> C route/leg/transfer set for an _itinerary_html
     smoke test -- only shape matters, not delay-distribution realism, since
     the risk figures are supplied directly via a hand-built TransferRisk."""
@@ -162,6 +168,7 @@ def _single_transfer_route_fixtures(miss_probability: float, impact_minutes: flo
         TransferRisk(
             transfer_id="T1", miss_probability=miss_probability,
             simulated_miss_rate=miss_probability, impact_minutes=impact_minutes,
+            below_mct=below_mct,
         )
     ]
     return route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks
@@ -225,3 +232,103 @@ def test_itinerary_html_still_shows_buffer_for_safe_and_tight_connections():
     assert "Tight connection (20% risk)" in html
     assert "5 min" in html
     assert "if missed" not in html
+
+
+# ---------------------------------------------------------------------------
+# SPEC.md §3.6.4 -- final 5-phrase MCT wording (no standalone caption, no
+# "MCT" text anywhere in the rendered HTML). below_mct is engine-authoritative
+# (engine.TransferRisk.below_mct, set by simulate_route's MCT gradient floor)
+# -- the UI trusts it directly rather than recomputing anything itself.
+# ---------------------------------------------------------------------------
+
+
+def test_itinerary_html_upgrades_low_risk_below_mct_to_tight_connection():
+    """A below-MCT connection can never read as "Safe" -- even when the
+    numeric risk is low, it's folded into "Tight connection" (the same
+    phrase a genuinely medium-risk connection gets), with the plain buffer
+    minutes and no separate MCT text of any kind."""
+    route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks = (
+        _single_transfer_route_fixtures(miss_probability=0.05, impact_minutes=999.0, below_mct=True)
+    )
+
+    html = _itinerary_html(route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks)
+
+    assert "Tight connection (5% risk)" in html
+    assert "5 min" in html
+    assert "if missed" not in html
+    assert "Safe connection" not in html
+    assert "MCT" not in html
+
+
+def test_itinerary_html_keeps_safe_connection_when_low_risk_and_not_below_mct():
+    route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks = (
+        _single_transfer_route_fixtures(miss_probability=0.05, impact_minutes=999.0, below_mct=False)
+    )
+
+    html = _itinerary_html(route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks)
+
+    assert "Safe connection (5% risk)" in html
+
+
+def test_itinerary_html_shows_unrealistic_transfer_when_below_mct_high_with_no_fallback():
+    """below_mct + base-High + no rescuing fallback (impact_minutes way
+    above the Override threshold) -- the headline must say "Unrealistic
+    transfer", not the generic statistical "Miss likely"."""
+    route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks = (
+        _single_transfer_route_fixtures(miss_probability=0.90, impact_minutes=999.0, below_mct=True)
+    )
+
+    html = _itinerary_html(route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks)
+
+    assert "Unrealistic transfer (90% risk)" in html
+    assert "Miss likely" not in html
+    assert "MCT" not in html
+
+
+def test_itinerary_html_keeps_recoverable_miss_wording_when_below_mct_but_fallback_is_cheap():
+    """below_mct + base-High but the Impact Override fires (a cheap
+    fallback exists) -- must keep the reassuring "Recoverable miss" phrase,
+    not swap to "Unrealistic transfer". No MCT-specific text of any kind --
+    the reassuring phrase alone is the whole story, per SPEC.md §3.6.4."""
+    route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks = (
+        _single_transfer_route_fixtures(miss_probability=0.90, impact_minutes=10.0, below_mct=True)
+    )
+
+    html = _itinerary_html(route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks)
+
+    assert "Recoverable miss (90% risk)" in html
+    assert "Unrealistic transfer" not in html
+    assert "MCT" not in html
+
+
+# ---------------------------------------------------------------------------
+# SPEC.md §7's proposed platform-info extension -- transfer-strip platform pair
+# ---------------------------------------------------------------------------
+
+
+def test_itinerary_html_shows_platform_pair_when_both_endpoints_have_one():
+    route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks = (
+        _single_transfer_route_fixtures(miss_probability=0.05, impact_minutes=999.0)
+    )
+    legs_by_id = dict(legs_by_id)
+    legs_by_id["AB"] = legs_by_id["AB"].model_copy(update={"destination_platform": "7"})
+    legs_by_id["BC"] = legs_by_id["BC"].model_copy(update={"origin_platform": "3"})
+
+    html = _itinerary_html(route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks)
+
+    assert "Plat. 7" in html
+    assert "Plat. 3" in html
+
+
+def test_itinerary_html_hides_platform_when_either_endpoint_missing():
+    """Real GTFS.DE platform_code coverage is sparse (confirmed against the
+    real feed, close to 0% at this corridor's major hubs) -- the default
+    fixtures (no platform set on either leg) must render nothing rather than
+    a placeholder."""
+    route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks = (
+        _single_transfer_route_fixtures(miss_probability=0.05, impact_minutes=999.0)
+    )
+
+    html = _itinerary_html(route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks)
+
+    assert "Plat." not in html

@@ -11,8 +11,11 @@ import pytest
 
 from pipelines.gtfs_ingest import (
     LINE_TYPES,
+    MCT_MAJOR_HUB_MINUTES,
+    MCT_STANDARD_MINUTES,
     _line_id_for_route,
     _normalize_line_type,
+    classify_station_mct,
     derive_transfers,
     parse_legs,
     parse_lines,
@@ -141,6 +144,24 @@ def test_parse_legs_sets_scheduled_times_from_feed():
     assert t1_leg.scheduled_arrival == datetime(2026, 8, 23, 10, 14, 0)
 
 
+def test_parse_legs_sets_platform_when_available():
+    """T1::0 runs FRA (Gleis 7) -> KOL (Gleis 3) -- both endpoints in
+    fixtures/gtfs_mini/stops.txt carry a platform_code."""
+    legs = parse_legs(FIXTURE_DIR, SERVICE_DATE)
+    t1_leg = next(leg for leg in legs if leg.leg_id == "T1::0")
+    assert t1_leg.origin_platform == "7"
+    assert t1_leg.destination_platform == "3"
+
+
+def test_parse_legs_platform_is_none_when_unavailable():
+    """T2::1 arrives at DE_MUC_HBF, which has no platform-level child stop
+    in the fixture -- destination_platform must be None, not a placeholder."""
+    legs = parse_legs(FIXTURE_DIR, SERVICE_DATE)
+    t2_leg1 = next(leg for leg in legs if leg.leg_id == "T2::1")
+    assert t2_leg1.origin_platform == "3"
+    assert t2_leg1.destination_platform is None
+
+
 def test_parse_legs_uses_placeholder_delay_distribution():
     legs = parse_legs(FIXTURE_DIR, SERVICE_DATE)
     for leg in legs:
@@ -219,3 +240,41 @@ def test_line_type_normalization_end_to_end_via_legs():
         seen_types.add(line_type)
 
     assert seen_types == LINE_TYPES  # fixture exercises all five line types
+
+
+# --- classify_station_mct ----------------------------------------------------
+
+
+def test_classify_station_mct_returns_empty_for_no_touches():
+    assert classify_station_mct([]) == {}
+
+
+def test_classify_station_mct_uniform_distribution_all_qualify_as_major_hub():
+    """Every station touched the same number of times: the 75th-percentile
+    threshold equals every station's own count, so every station is >= the
+    threshold and gets the major-hub tier -- there's no "below threshold"
+    station in a perfectly uniform distribution."""
+    pairs = [("A", "B"), ("C", "D")]
+    result = classify_station_mct(pairs)
+    assert set(result) == {"A", "B", "C", "D"}
+    assert all(v == MCT_MAJOR_HUB_MINUTES for v in result.values())
+
+
+def test_classify_station_mct_splits_a_graduated_distribution():
+    """S_k gets 2*k touches via k self-pairs (k=1..12): a clean, tie-free
+    spread of touch counts from 2 to 24. The 75th-percentile threshold falls
+    at 18, so the top third (S_9..S_12, counts 18/20/22/24) qualify as major
+    hubs and the bottom two-thirds (S_1..S_8) stay standard."""
+    pairs = [(f"S_{k}", f"S_{k}") for k in range(1, 13) for _ in range(k)]
+    result = classify_station_mct(pairs)
+    for k in range(1, 9):
+        assert result[f"S_{k}"] == MCT_STANDARD_MINUTES
+    for k in range(9, 13):
+        assert result[f"S_{k}"] == MCT_MAJOR_HUB_MINUTES
+
+
+def test_classify_station_mct_every_station_gets_a_tier():
+    pairs = [("A", "B"), ("B", "C"), ("C", "D")]
+    result = classify_station_mct(pairs)
+    assert set(result) == {"A", "B", "C", "D"}
+    assert all(v in (MCT_STANDARD_MINUTES, MCT_MAJOR_HUB_MINUTES) for v in result.values())

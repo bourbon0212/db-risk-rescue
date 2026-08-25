@@ -8,10 +8,13 @@ from pathlib import Path
 import pytest
 
 from engine import (
+    MCT_VIOLATION_MAX_FLOOR,
     SERVICE_FREQUENCY_MINUTES,
     RouteSimulationResult,
+    _mct_extra_fail_probability,
     _next_periodic_departure,
     index_dataset,
+    mct_violation_floor,
     precompute_fallback_plans,
     simulate_route,
     transfer_impact_minutes,
@@ -267,6 +270,62 @@ def test_precompute_fallback_plans_excludes_the_just_missed_leg_itself(dynamic_f
     assert all(leg.leg_id != "BC_ORIG" for leg in plan.legs)
 
 
+def test_precompute_fallback_plans_rejects_candidate_below_station_mct(dynamic_fallback_dataset):
+    """BC_ALT's entry connection at B is a 10-minute buffer (AB's scheduled
+    arrival 9:30 -> BC_ALT's departure 9:40) -- normally the fallback picked
+    by test_precompute_fallback_plans_picks_the_faster_alternative above.
+    With B's MCT set above that buffer, SPEC.md §7's MCT enforcement must
+    reject it instead of offering a physically-implausible dash, leaving no
+    surviving candidate (BC_ORIG, the only other option, is excluded by the
+    just-missed-leg rule regardless)."""
+    dataset = dynamic_fallback_dataset
+    legs_by_id, transfers_by_id, _ = index_dataset(dataset)
+    route = dataset.routes[0]
+    stations_by_id = {
+        "A": Station(station_id="A", name="A"),
+        "B": Station(station_id="B", name="B", mct_minutes=15),
+        "C": Station(station_id="C", name="C"),
+    }
+
+    plans = precompute_fallback_plans(
+        route, dataset, legs_by_id, transfers_by_id, stations_by_id=stations_by_id
+    )
+
+    assert plans["T_MISS"] is None
+
+
+def test_precompute_fallback_plans_keeps_candidate_when_mct_satisfied(dynamic_fallback_dataset):
+    """Same fixture, but with B's MCT at or below the 10-minute buffer --
+    the candidate must still be picked, proving stations_by_id doesn't
+    change behavior when the connection already clears the MCT."""
+    dataset = dynamic_fallback_dataset
+    legs_by_id, transfers_by_id, _ = index_dataset(dataset)
+    route = dataset.routes[0]
+    stations_by_id = {s: Station(station_id=s, name=s, mct_minutes=5) for s in ("A", "B", "C")}
+
+    plans = precompute_fallback_plans(
+        route, dataset, legs_by_id, transfers_by_id, stations_by_id=stations_by_id
+    )
+
+    plan = plans["T_MISS"]
+    assert plan is not None
+    assert [leg.leg_id for leg in plan.legs] == ["BC_ALT"]
+
+
+def test_precompute_fallback_plans_no_mct_enforcement_when_station_unknown(dynamic_fallback_dataset):
+    """A station_id absent from stations_by_id (e.g. a partial lookup)
+    degrades to no enforcement for that transfer, not a crash."""
+    dataset = dynamic_fallback_dataset
+    legs_by_id, transfers_by_id, _ = index_dataset(dataset)
+    route = dataset.routes[0]
+
+    plans = precompute_fallback_plans(
+        route, dataset, legs_by_id, transfers_by_id, stations_by_id={}
+    )
+
+    assert plans["T_MISS"] is not None
+
+
 def test_simulate_route_missed_transfer_adopts_dynamic_fallback_eta(dynamic_fallback_dataset):
     dataset = dynamic_fallback_dataset
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
@@ -487,6 +546,127 @@ def test_simulate_route_exposes_p85_penalty_minutes(dataset, routes_by_id):
 
     expected = (result.p85_eta - route.scheduled_arrival).total_seconds() / 60.0
     assert result.p85_penalty_minutes == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# SPEC.md §7 — MCT gradient floor
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "buffer_minutes,mct_minutes,expected",
+    [
+        (10, 10, 0.0),   # at MCT -- no floor
+        (11, 10, 0.0),   # above MCT -- no floor
+        (9, 10, 0.095),  # 1 minute short -- barely nudges
+        (5, 10, 0.475),  # halfway short -- half the max floor
+        (0, 10, MCT_VIOLATION_MAX_FLOOR),  # 0-minute "connection" -- full floor
+        (-5, 10, MCT_VIOLATION_MAX_FLOOR),  # negative buffer clamps to the same max, no higher
+    ],
+)
+def test_mct_violation_floor_scales_linearly_with_deficit(buffer_minutes, mct_minutes, expected):
+    assert mct_violation_floor(buffer_minutes, mct_minutes) == pytest.approx(expected)
+
+
+def test_mct_violation_floor_never_exceeds_max_floor():
+    assert mct_violation_floor(-1000, 10) == pytest.approx(MCT_VIOLATION_MAX_FLOOR)
+
+
+@pytest.mark.parametrize(
+    "analytic,floor,expected",
+    [
+        (0.5, 0.3, 0.0),    # floor doesn't bind -- analytic already exceeds it
+        (1.0, 0.9, 0.0),    # already-certain miss -- nothing left to force
+        (0.2, 0.8, 0.75),   # floor binds -- (0.8-0.2)/(1-0.2)
+        (0.0, 0.95, 0.95),  # no natural risk at all -- extra-fail rate equals the floor itself
+    ],
+)
+def test_mct_extra_fail_probability(analytic, floor, expected):
+    assert _mct_extra_fail_probability(analytic, floor) == pytest.approx(expected)
+
+
+@pytest.fixture
+def zero_buffer_mct_fixture():
+    """A -> B -> C, one transfer at B with a 0-minute scheduled buffer and a
+    delay distribution that's *never* late -- analytic miss probability is
+    exactly 0, isolating the MCT floor's own contribution from any
+    statistical delay risk."""
+    leg_ab = Leg(
+        leg_id="AB", line_id="LN", origin_station_id="A", destination_station_id="B",
+        scheduled_departure=datetime(2026, 8, 23, 9, 0), scheduled_arrival=datetime(2026, 8, 23, 9, 30),
+        delay_distribution_minutes={"0": 1.0},
+    )
+    leg_bc = Leg(
+        leg_id="BC", line_id="LN", origin_station_id="B", destination_station_id="C",
+        scheduled_departure=datetime(2026, 8, 23, 9, 30), scheduled_arrival=datetime(2026, 8, 23, 10, 0),
+        delay_distribution_minutes={"0": 1.0},
+    )
+    legs_by_id = {"AB": leg_ab, "BC": leg_bc}
+    transfer = Transfer(
+        transfer_id="T1", station_id="B", from_leg_id="AB", to_leg_id="BC", scheduled_buffer_minutes=0,
+    )
+    transfers_by_id = {"T1": transfer}
+    lines_by_id = {"LN": Line(line_id="LN", type="RE", operator="Test")}
+    route = Route(
+        route_id="RT", legs=["AB", "BC"], transfers=["T1"],
+        origin_station_id="A", destination_station_id="C",
+        scheduled_departure=datetime(2026, 8, 23, 9, 0), scheduled_arrival=datetime(2026, 8, 23, 10, 0),
+    )
+    return route, legs_by_id, transfers_by_id, lines_by_id
+
+
+def test_simulate_route_applies_mct_floor_when_stations_by_id_given(zero_buffer_mct_fixture):
+    """Station B is a major hub (mct_minutes=10) but the transfer's buffer
+    is 0 -- deficit_fraction=1.0, so the floor is the full
+    MCT_VIOLATION_MAX_FLOOR. Since analytic risk is 0 here, effective
+    miss_probability must equal the floor exactly, below_mct must be True,
+    and enough iterations must show the simulated rate converging to it --
+    proving the Monte Carlo loop, not just the displayed number, respects it."""
+    route, legs_by_id, transfers_by_id, lines_by_id = zero_buffer_mct_fixture
+    stations_by_id = {"B": Station(station_id="B", name="B", mct_minutes=10)}
+
+    result = simulate_route(
+        route, legs_by_id, transfers_by_id, lines_by_id,
+        n_iterations=3000, rng=random.Random(42), stations_by_id=stations_by_id,
+    )
+
+    risk = result.transfer_risks[0]
+    assert risk.below_mct is True
+    assert risk.miss_probability == pytest.approx(MCT_VIOLATION_MAX_FLOOR)
+    assert risk.simulated_miss_rate == pytest.approx(MCT_VIOLATION_MAX_FLOOR, abs=0.03)
+
+
+def test_simulate_route_without_stations_by_id_ignores_mct_entirely(zero_buffer_mct_fixture):
+    """Omitting stations_by_id (the default) must be a strict no-op: same
+    0-minute buffer, but with no station data the analytic miss probability
+    (0.0, this leg is never late) is what's reported and simulated --
+    proving every pre-existing (no stations_by_id) caller is unaffected."""
+    route, legs_by_id, transfers_by_id, lines_by_id = zero_buffer_mct_fixture
+
+    result = simulate_route(
+        route, legs_by_id, transfers_by_id, lines_by_id,
+        n_iterations=200, rng=random.Random(42),
+    )
+
+    risk = result.transfer_risks[0]
+    assert risk.below_mct is False
+    assert risk.miss_probability == pytest.approx(0.0)
+    assert risk.simulated_miss_rate == pytest.approx(0.0)
+
+
+def test_simulate_route_mct_floor_is_reproducible_with_seeded_rng(zero_buffer_mct_fixture):
+    route, legs_by_id, transfers_by_id, lines_by_id = zero_buffer_mct_fixture
+    stations_by_id = {"B": Station(station_id="B", name="B", mct_minutes=10)}
+
+    result_a = simulate_route(
+        route, legs_by_id, transfers_by_id, lines_by_id,
+        n_iterations=200, rng=random.Random(123), stations_by_id=stations_by_id,
+    )
+    result_b = simulate_route(
+        route, legs_by_id, transfers_by_id, lines_by_id,
+        n_iterations=200, rng=random.Random(123), stations_by_id=stations_by_id,
+    )
+    assert result_a.simulated_arrivals == result_b.simulated_arrivals
 
 
 def test_simulate_route_transfer_risk_exposes_impact_minutes(dynamic_fallback_dataset):

@@ -10,6 +10,12 @@ class Station(BaseModel):
 
     station_id: str
     name: str
+    # SPEC.md §7's proposed MCT extension, now promoted (no per-station
+    # min_transfer_time exists in either real GTFS.DE feed -- see
+    # pipelines/gtfs_ingest.py's classify_station_mct). Defaults to the
+    # standard-station value so pre-existing fixtures (mock_data.json) that
+    # don't set it validate unchanged.
+    mct_minutes: int = 5
 
 
 class Line(BaseModel):
@@ -30,6 +36,13 @@ class Leg(BaseModel):
     scheduled_departure: datetime
     scheduled_arrival: datetime
     delay_distribution_minutes: dict[str, float]
+    # Real GTFS.DE platform_code coverage is sparse and, at this corridor's
+    # major hubs specifically, close to 0% (confirmed against the real
+    # feed) -- these stay None for almost every leg, by design, rather than
+    # a placeholder string. ui_components.py only renders a platform pair
+    # when both a leg's arrival and the next leg's departure have one.
+    origin_platform: str | None = None
+    destination_platform: str | None = None
 
     @field_validator("delay_distribution_minutes")
     @classmethod

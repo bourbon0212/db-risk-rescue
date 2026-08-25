@@ -71,6 +71,8 @@ def test_leg_templates_match_anchored_legs_when_re_anchored():
         assert template.destination_station_id == leg.destination_station_id
         assert _anchor_datetime(template.departure_seconds, SERVICE_DATE) == leg.scheduled_departure
         assert _anchor_datetime(template.arrival_seconds, SERVICE_DATE) == leg.scheduled_arrival
+        assert template.origin_platform == leg.origin_platform
+        assert template.destination_platform == leg.destination_platform
 
 
 def test_leg_templates_carry_trip_id_and_sequence_index():

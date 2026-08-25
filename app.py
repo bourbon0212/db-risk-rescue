@@ -111,6 +111,7 @@ def simulate_one_route(
     seed: int,
     _route: Route,
     _search_indexes: tuple[dict[str, Leg], dict[str, list[Transfer]]],
+    _stations_by_id: dict[str, Station],
 ) -> RouteSimulationResult:
     """Cached per route_id (+ dataset path/n_iterations/seed), not per
     display_limit batch -- a "Load more" click that reveals routes 6-10 only
@@ -128,11 +129,13 @@ def simulate_one_route(
     dataset = get_dataset(path)
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
     fallback_plans = precompute_fallback_plans(
-        _route, dataset, legs_by_id, transfers_by_id, search_indexes=_search_indexes
+        _route, dataset, legs_by_id, transfers_by_id,
+        search_indexes=_search_indexes, stations_by_id=_stations_by_id,
     )
     return simulate_route(
         _route, legs_by_id, transfers_by_id, lines_by_id,
         n_iterations=n_iterations, rng=random.Random(seed), fallback_plans=fallback_plans,
+        stations_by_id=_stations_by_id,
     )
 
 
@@ -178,6 +181,7 @@ def simulate_one_route_warehouse(
     _legs_by_id: dict[str, Leg],
     _transfers_by_id: dict[str, Transfer],
     _lines_by_id: dict[str, Line],
+    _stations_by_id: dict[str, Station],
 ) -> RouteSimulationResult:
     """Warehouse-path sibling of simulate_one_route() -- same per-route cache
     key reasoning (route_id is a stable, globally-unique identifier of a
@@ -192,11 +196,13 @@ def simulate_one_route_warehouse(
         )
 
     fallback_plans = precompute_fallback_plans(
-        _route, None, _legs_by_id, _transfers_by_id, route_search_fn=route_search_fn
+        _route, None, _legs_by_id, _transfers_by_id,
+        route_search_fn=route_search_fn, stations_by_id=_stations_by_id,
     )
     return simulate_route(
         _route, _legs_by_id, _transfers_by_id, _lines_by_id,
         n_iterations=n_iterations, rng=random.Random(seed), fallback_plans=fallback_plans,
+        stations_by_id=_stations_by_id,
     )
 
 
@@ -224,8 +230,8 @@ render_header_banner(N_ITERATIONS)
 if use_warehouse:
     conn = get_warehouse_connection()
     stations_by_id = {
-        row[0]: Station(station_id=row[0], name=row[1])
-        for row in conn.execute("SELECT station_id, name FROM stations").fetchall()
+        row[0]: Station(station_id=row[0], name=row[1], mct_minutes=row[2])
+        for row in conn.execute("SELECT station_id, name, mct_minutes FROM stations").fetchall()
     }
     if not stations_by_id:
         st.warning("The warehouse has no stations to search.")
@@ -267,7 +273,7 @@ if use_warehouse:
     results_by_route = {
         route.route_id: simulate_one_route_warehouse(
             route.route_id, service_date, N_ITERATIONS, RNG_SEED,
-            conn, route, legs_by_id, transfers_by_id, lines_by_id,
+            conn, route, legs_by_id, transfers_by_id, lines_by_id, stations_by_id,
         )
         for route in sliced_routes
     }
@@ -318,7 +324,8 @@ else:
     t_sim0 = time.perf_counter()
     results_by_route = {
         route.route_id: simulate_one_route(
-            data_source_path, route.route_id, N_ITERATIONS, RNG_SEED, route, search_indexes
+            data_source_path, route.route_id, N_ITERATIONS, RNG_SEED,
+            route, search_indexes, stations_by_id,
         )
         for route in sliced_routes
     }
