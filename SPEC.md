@@ -314,10 +314,19 @@ This is a distinct signal from the Local Risk classification (§5.3): Global Hea
 
 ### 5.3 Route Detail View
 
-Selecting a card opens a **horizontal timeline**: leg → transfer → leg → transfer → ..., left to right. Each transfer node is color-coded by a two-layer **Local Risk** classification — a base probability band with an impact-aware override, rather than probability alone:
+Selecting a card opens a **horizontal timeline**: leg → transfer → leg → transfer → ..., left to right. Each transfer node is color-coded by a **Local Risk** classification — five steps from raw probability to final phrase, not probability alone:
 
-1. **Base Probability Band** — `P(miss)` from §3.1: Green < 10%, Yellow 10–30%, Red > 30%.
-2. **Impact Override** — if the base band is Red, but the transfer's precomputed impact (`impact_minutes`, §3.4) is **≤ 15 min**, the displayed band downgrades to Yellow. The underlying miss probability shown in the label is unchanged — only the color/phrase (`UIUX_SPEC.md` §1.3) softens, reflecting that a fast, already-known alternative exists rather than a real disruption.
+| Step | What happens | Defined in |
+|---|---|---|
+| 1. Compute the raw probability | `P(miss) = P(delay_from_leg > buffer)`, from the upstream leg's own delay history | §3.1 |
+| 2. Apply the MCT floor | A below-station-MCT connection gets a gradient floor added on top of the raw number, never lowering it | §3.6.2 |
+| 3. Band the result | Green `< 10%` · Yellow `10–30%` · Red `> 30%` | this section |
+| 4. Apply the Impact Override | A Red transfer with a cheap fallback (`impact_minutes` ≤ 15 min) displays Yellow instead — the number in the label is unchanged, only the color/phrase softens | this section |
+| 5. Pick the phrase | `Safe connection` / `Tight connection` / `Recoverable miss` / `Miss likely` / `Unrealistic transfer` | §3.6.4, `UIUX_SPEC.md` §1.3 |
+
+**This is a completely different metric from the card's own left-edge color.** Global Health (§5.2) is driven by the route's P85 penalty against fixed 30/60-*minute* thresholds — not by any transfer's miss probability, and not by this five-step pipeline at all. A route can show an all-Green transfer timeline and still carry a Yellow card edge, or the reverse; neither is a bug (§5.2 explains why).
+
+**Step 4 in detail — the Impact Override.** If the base band (step 3) is Red, but the transfer's precomputed impact (`impact_minutes`, §3.4) is **≤ 15 min**, the displayed band downgrades to Yellow:
 
 | Impact (`impact_minutes`) | Displayed band when base is Red |
 |---|---|
@@ -326,9 +335,9 @@ Selecting a card opens a **horizontal timeline**: leg → transfer → leg → t
 
 This exists to separate genuinely fatal transfers (a long, costly wait) from statistically-red-but-practically-harmless ones (a fast reroute, or a fallback that even arrives early, already covers the miss) — without it, the transfer strip flags every >30%-miss connection identically regardless of how bad actually missing it would be.
 
-**MCT augmentation.** Independently of the table above, §3.6's Minimum Connection Time gradient floor can push (or keep) a transfer's miss probability in a band the delay-distribution history alone wouldn't have reached. Two effects, at two tiers: at the Red band, when `TransferRisk.below_mct` is True and no Impact Override rescues it, the transfer displays as a distinct fifth phrase, `Unrealistic transfer`, instead of reusing `Miss likely` — the color/band math above is unchanged, only the wording differs, since the cause there is actionable (whether hoping for an on-time train helps at all). At the Green band, a below-MCT transfer is never left Green — it displays as `Tight connection` even when its numeric probability alone would round to Green — but *without* a distinct phrase or a wording change of any kind, since at that tier the cause doesn't change what the passenger should do. See §3.6.4 and `UIUX_SPEC.md` §1.4 for the full wording rules.
+**Step 5 in detail — MCT's effect on the phrase, distinct from its effect on the number (step 2).** At the Red band, when `TransferRisk.below_mct` is True and no Impact Override rescues it, the transfer displays as a distinct fifth phrase, `Unrealistic transfer`, instead of reusing `Miss likely` — the color/band math is unchanged, only the wording differs, since the cause there is actionable (whether hoping for an on-time train helps at all). At the Green band, a below-MCT transfer is never left Green — it displays as `Tight connection` even when its numeric probability alone would round to Green — but *without* a distinct phrase or a wording change of any kind, since at that tier the cause doesn't change what the passenger should do. See §3.6.4 and `UIUX_SPEC.md` §1.4 for the full wording rules.
 
-This gives an at-a-glance risk story for that specific journey, complementing the Global Health signal from §5.2.
+This five-step pipeline gives an at-a-glance risk story for that specific journey, complementing the Global Health signal from §5.2.
 
 **Implementation status:** both rules are wired in — `engine.py` exposes `impact_minutes` (`TransferRisk`) and `p85_penalty_minutes` (`RouteSimulationResult`) alongside the existing simulation outputs, and `ui_components.py` consumes them for the transfer-strip and card-edge coloring. One refinement beyond the rules as originally specified here: any base-Red transfer — not just one downgraded by the Impact Override — renders its trailing figure as the fallback's absolute arrival clock time rather than the scheduled buffer, since a base-Red transfer's buffer is uninformative regardless of whether the override fires (`UIUX_SPEC.md` §1.3, §5 history #16–#19).
 

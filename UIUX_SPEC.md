@@ -37,12 +37,15 @@ This rule applies to every future component too: if a new UI need seems to call 
 
 Numeric risk percentages are necessary but not sufficient — "20%" alone doesn't tell a rushed traveler whether that's fine or alarming. Every risk band therefore pairs a percentage with an action-first phrase that tells the user what to *do* with the number, not just what it *is*:
 
+All five phrases the app can show, in one place — `SPEC.md` §5.3 has the full five-step pipeline (probability → MCT floor → band → override → phrase) that decides which one fires:
+
 | Band (displayed color) | Phrase | Rationale |
 |---|---|---|
-| Low (Green) | `Safe connection` | Confirms the connection is comfortable — no anxiety-inducing language for the common case. |
-| Medium (Yellow), genuine | `Tight connection` | Signals attentiveness without alarm — this is a "keep an eye on it" band, not a "you're in trouble" one. |
-| Medium (Yellow), Impact Override | `Recoverable miss` | A base-Red transfer (`P(miss)` > 30%, `SPEC.md` §3.1) downgraded to Yellow because its precomputed fallback impact is ≤15 min (`SPEC.md` §5.3). Deliberately *not* the same phrase as genuine Medium: the miss probability really is high, and the wording says so plainly ("miss") rather than pretending the connection is merely tight — "recoverable" is what explains the yellow instead of red, not a softened read of the odds. |
-| High (Red) | `Miss likely` | Deliberately blunt. Reserved for base-Red transfers where the Impact Override does *not* apply — a real, costly miss, not just a high-probability one. |
+| Low (Green) | `Safe connection` | Confirms the connection is comfortable — no anxiety-inducing language for the common case. Never shown for a below-MCT connection — see the Yellow/genuine row. |
+| Medium (Yellow), genuine **or** below MCT | `Tight connection` | Signals attentiveness without alarm — this is a "keep an eye on it" band, not a "you're in trouble" one. Fires identically whether the cause is delay history or a scheduled buffer under the station's MCT (§1.4) — the passenger's action ("don't dawdle") is the same either way, so the wording doesn't distinguish them. |
+| Medium (Yellow), Impact Override | `Recoverable miss` | A base-Red transfer (`P(miss)` > 30%, `SPEC.md` §3.1) downgraded to Yellow because its precomputed fallback impact is ≤15 min (`SPEC.md` §5.3). Deliberately *not* the same phrase as genuine Medium: the miss probability really is high, and the wording says so plainly ("miss") rather than pretending the connection is merely tight — "recoverable" is what explains the yellow instead of red, not a softened read of the odds. Fires the same way regardless of whether MCT contributed to the Red band in the first place (§1.4). |
+| High (Red), not MCT-driven | `Miss likely` | Deliberately blunt. Reserved for base-Red transfers where the Impact Override does *not* apply and MCT isn't the cause — a real, costly miss driven by delay history, where an on-time train would have been enough to save it. |
+| High (Red), MCT-driven | `Unrealistic transfer` | Reserved for base-Red transfers where the Impact Override does *not* apply **and** the buffer is below the station's MCT (§1.4, `SPEC.md` §3.6.4) — here an on-time train would *not* be enough, which is a materially different, more actionable fact than `Miss likely` communicates. |
 
 Earlier drafts used "Low risk / Medium risk / High risk" as standalone labels; this was rejected as *dangerously ambiguous* — a user skimming for "high" could easily misread it as "high chance of making the connection." The current wording removes that failure mode entirely: there is no reading of "Miss likely (38% risk)" that could be mistaken for reassurance, and "Recoverable miss (37% risk) · arrives 08:51 if missed" doesn't read as "this is fine, ignore it" either — it says a miss is likely *and* names the reason it's not urgent, in one line.
 
