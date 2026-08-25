@@ -5,20 +5,14 @@ Per DATA_SPEC.md §7 and §8 step 5. This is a one-off/periodic
 script (run manually or on a schedule), not something data_loader.py or
 app.py invoke at request time.
 
-Two build paths live here:
-  - build_dataset(): the small fixture/demo path from Step 5, unchanged --
-    used by __main__ as a fallback when no real download is present, and by
-    test_build_dataset.py's smoke test.
-  - build_real_dataset(): the real path, added once data/raw/gtfs_fv_latest.zip
-    and gtfs_rv_latest.zip (from pipelines/download_raw_data.py) exist. It
-    scopes each feed to DB-operated, corridor-touching routes/trips
-    (pipelines/gtfs_scope.py) before handing them to gtfs_ingest.py's
-    unmodified parse_lines/parse_legs. If a data/raw/delays_*.parquet file
-    (from pipelines/download_raw_data.py) is present, delay distributions
-    are built from the real piebro archive via pipelines/delay_mapping.py;
-    otherwise it falls back to the same synthetic per-type samples as
-    before, so the script still runs end-to-end without the ~600MB parquet
-    download.
+Two build paths, mirroring build_warehouse.py's structure:
+  - build_dataset():      fixture/demo path (fixtures/gtfs_smoke/), used by
+                          the smoke test and as __main__'s fallback when no
+                          real download is present.
+  - build_real_dataset(): the real path over data/raw/'s two feeds. Falls
+                          back to synthetic per-type delay samples when no
+                          delays_*.parquet is present, so it still runs
+                          end-to-end without the large parquet download.
 """
 
 import tempfile
@@ -163,7 +157,7 @@ def build_dataset(
     service_date: date,
     min_samples: int = DEFAULT_MIN_SAMPLES,
 ) -> MockDataset:
-    """Run the full Phase 2 pipeline and return a validated MockDataset."""
+    """Run the full Snapshot pipeline and return a validated MockDataset."""
     stations = parse_stations(gtfs_dir)
     lines = parse_lines(gtfs_dir)
     legs = parse_legs(gtfs_dir, service_date)

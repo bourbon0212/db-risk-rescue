@@ -1,4 +1,4 @@
-"""Smoke test for pipelines/build_warehouse.py (SPEC.md §4.3): runs the fixture/
+"""Smoke test for pipelines/build_warehouse.py (DATA_SPEC.md §6.4): runs the fixture/
 demo path against fixtures/gtfs_smoke/ (same fixture and synthetic delay
 data as test_build_dataset.py's build_dataset() smoke test) and checks the
 written DuckDB warehouse end to end.

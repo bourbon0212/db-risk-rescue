@@ -59,44 +59,22 @@ def precompute_fallback_plans(
     search_indexes: tuple[dict[str, Leg], dict[str, list[Transfer]]] | None = None,
     stations_by_id: dict[str, Station] | None = None,
 ) -> dict[str, FallbackPlan | None]:
-    """SPEC.md §3.4 — one fallback lookup per transfer node in `route`,
-    computed once before the Monte Carlo loop so a missed connection is an
-    O(1) cache hit during simulation rather than a fresh pathfinding query
-    on every iteration.
+    """One fallback lookup per transfer node in `route`, computed once before
+    the Monte Carlo loop so a miss is an O(1) cache hit rather than a fresh
+    pathfinding query per iteration. Candidate filters and the transfer-budget
+    arithmetic: SPEC.md §3.4. Backend-agnosticism: SPEC.md §3.5.
 
-    For the transfer at index i, the fallback search is subject to a
-    remaining transfer budget of MAX_TOTAL_TRANSFERS - (i + 1) — the
-    network-wide cap minus the transfers already used reaching that
-    station. A transfer with no surviving candidate route maps to None,
-    meaning simulate_route falls back to the static same-line-headway wait
-    (§3.2 Step 4) for that node, unchanged.
+    A transfer with no surviving candidate maps to None, which sends
+    simulate_route to the same-line-headway wait (§3.2 Step 4) for that node.
 
-    `route_search_fn` (SPEC.md §3.5), if given, replaces the default
-    in-memory `find_candidate_routes(dataset, ...)` call with
-    `route_search_fn(origin_id, destination_id, departure_time)` — this is
-    how the Phase 3 DuckDB-backed path (pipelines/route_search_duckdb.py)
-    plugs in without this function's control flow changing at all. `dataset`
-    may be None whenever route_search_fn is given, since it's then never
-    touched. Either way, this whole function still runs once per transfer
-    node before the Monte Carlo loop, never inside it — the O(1)-per-
-    iteration guarantee only depends on that call count, not on which
-    backend answers each call.
-
-    `search_indexes`, if given, is a prior
-    pipelines.route_search.build_route_search_indexes(dataset) result,
-    passed straight through to the default find_candidate_routes call so a
-    caller running several routes' worth of fallback searches against the
-    same dataset in one batch can share one pair of indexes instead of each
-    sub-search rebuilding them. Ignored when route_search_fn is given.
-
-    `stations_by_id`, if given, enables station-level Minimum Connection
-    Time enforcement (SPEC.md §7's proposed MCT extension): a candidate
-    whose first leg departs less than the stranded station's mct_minutes
-    after the upstream leg's own scheduled arrival is rejected outright, so
-    a physically-implausible dash across a large hub (e.g. a 2-minute
-    "connection" at a station whose real MCT is 10) is never offered as a
-    fallback. Left as None (the default), no MCT filtering is applied,
-    reproducing the original behavior exactly.
+    Optional args, each a no-op when omitted:
+      route_search_fn  -- replaces the default in-memory find_candidate_routes,
+                          letting the Warehouse path plug in unchanged. When
+                          given, `dataset` is never touched and may be None.
+      search_indexes   -- a prior build_route_search_indexes(dataset) result,
+                          shared across a batch instead of rebuilt per
+                          sub-search. Ignored when route_search_fn is given.
+      stations_by_id   -- enables the MCT veto on candidate entry connections.
     """
     ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]
     ordered_transfers = [transfers_by_id[t_id] for t_id in route.transfers]
@@ -178,7 +156,7 @@ def transfer_miss_probability(upstream_leg: Leg, transfer: Transfer) -> float:
     )
 
 
-# SPEC.md §7's MCT extension: a below-MCT transfer's *effective* miss
+# SPEC.md §3.6.2: a below-MCT transfer's *effective* miss
 # probability is never allowed to read as literal certainty (1.0) -- there's
 # always some chance of a genuine cross-platform sprint -- so the gradient
 # floor asymptotes at this ceiling instead of 1.0.
@@ -186,17 +164,16 @@ MCT_VIOLATION_MAX_FLOOR = 0.95
 
 
 def mct_violation_floor(buffer_minutes: int, mct_minutes: int) -> float:
-    """SPEC.md §7 — a gradient (not cliff-edge) floor on miss probability for
+    """SPEC.md §3.6.2 — a gradient (not cliff-edge) floor on miss probability for
     a transfer whose scheduled buffer is below its station's Minimum
     Connection Time.
 
     Scales linearly from 0 (buffer at or above mct_minutes -- no floor
     applied at all) up to MCT_VIOLATION_MAX_FLOOR (buffer at or below zero
     minutes -- treated as near-certain regardless of how punctual the
-    upstream line historically is). A buffer just 1 minute short of a
-    10-minute hub MCT barely nudges the risk; a 0-minute "connection" at
-    that same hub dominates it, deliberately avoiding the binary "impossible
-    vs. fine" cliff a flat threshold/flat floor would both produce.
+    upstream line historically is). A buffer barely short of MCT barely nudges
+    the risk; one far short dominates it. The gradient is deliberate: both a
+    hard veto and a flat floor reintroduce an "impossible vs. fine" cliff.
     """
     if mct_minutes <= 0:
         return 0.0
@@ -231,8 +208,8 @@ def transfer_impact_minutes(
     lines_by_id: dict[str, Line],
     fallback_plans: dict[str, FallbackPlan | None] | None,
 ) -> float:
-    """SPEC.md §3.4 / §5.3 — schedule-level cost of missing this transfer, for
-    the UI's Local Risk Impact Override. Reads the same precomputed
+    """SPEC.md §3.4 / §5.3 — schedule-level cost of missing this transfer, and
+    the input to the UI's Impact Override. Reads the same precomputed
     FallbackPlan the simulation loop uses on a miss (O(1), no extra search):
     when one exists, the impact is how much later (or earlier, if the
     fallback beats the original schedule) the fallback route's own scheduled
@@ -281,7 +258,7 @@ class TransferRisk:
     miss_probability: float
     simulated_miss_rate: float
     impact_minutes: float
-    # SPEC.md §7 — True when this transfer's scheduled buffer is below its
+    # SPEC.md §3.6.2 — True when this transfer's scheduled buffer is below its
     # station's MCT, i.e. miss_probability may include the gradient floor
     # rather than being purely statistical. ui_components.py uses this to
     # pick "Unrealistic transfer" wording instead of "Miss likely" when the
@@ -320,7 +297,7 @@ def simulate_route(
     waiting for the next same-line departure. Omitting it (the default)
     reproduces the original §3.2 Step 4 behavior exactly.
 
-    `stations_by_id`, if given, enables SPEC.md §7's MCT gradient floor for
+    `stations_by_id`, if given, enables SPEC.md §3.6.2/§3.6.3's MCT gradient floor for
     the route's own transfers (not fallback-internal ones -- see
     precompute_fallback_plans for those): each transfer's *effective* miss
     probability becomes max(analytic, mct_violation_floor(...)), and the
@@ -351,7 +328,7 @@ def simulate_route(
                 f"{ordered_legs[i].leg_id} -> {ordered_legs[i + 1].leg_id}"
             )
 
-    # SPEC.md §7 — per-transfer MCT gradient, computed once up front (not
+    # SPEC.md §3.6.3 — per-transfer MCT gradient, computed once up front (not
     # per iteration): analytic_miss_probability is the untouched statistical
     # figure (transfer_miss_probability); effective_miss_probability folds
     # in the floor for display/classification; extra_fail_probability is
@@ -393,7 +370,7 @@ def simulate_route(
             downstream_leg = current_legs[leg_idx + 1]
 
             connection_holds = realized_arrival <= downstream_leg.scheduled_departure
-            # SPEC.md §7 — an MCT-forced miss only ever applies to the
+            # SPEC.md §3.6.3 — an MCT-forced miss only ever applies to the
             # original route's own transfers (current_transfers is
             # ordered_transfers), same scoping as miss_counts above:
             # fallback-internal transfers aren't MCT-checked here (that's
@@ -410,13 +387,14 @@ def simulate_route(
                 connection_holds = False
 
             if connection_holds:
-                # Step 3: connection holds — downstream leg departs on schedule.
+                # §3.2 Step 3 — carry the realized delay forward onto the next leg.
                 delay = sample_delay_minutes(downstream_leg.delay_distribution_minutes, rng)
                 realized_arrival = downstream_leg.scheduled_arrival + timedelta(minutes=delay)
                 leg_idx += 1
                 continue
 
-            # Step 4: connection missed.
+            # §3.2 Step 4 — missed. Only the original route's transfers are
+            # counted; a miss inside a fallback plan isn't the user's transfer.
             if current_legs is ordered_legs:
                 miss_counts[leg_idx] += 1
 
@@ -432,8 +410,8 @@ def simulate_route(
                 realized_arrival = first_leg.scheduled_arrival + timedelta(minutes=delay)
                 continue
 
-            # No fallback available — resolve via next periodic departure
-            # of the same downstream line (unchanged §3.2 Step 4).
+            # No fallback available — wait for the next periodic departure of
+            # the same downstream line (§3.2 Step 4).
             line_type = lines_by_id[downstream_leg.line_id].type
             headway = get_headway_minutes(line_type)
             next_departure = _next_periodic_departure(

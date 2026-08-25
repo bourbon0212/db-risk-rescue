@@ -1,24 +1,13 @@
 """Corridor + DB-agency scoping for the real, national GTFS.DE feed.
 
-Per DATA_SPEC.md §3 step 2: "Scope the feed before parsing anything else...
-The national feed covers every bus, tram, and train in Germany -- far more
-than this app needs." This module filters a downloaded GTFS.DE feed
-(fv_free or rv_free, extracted from data/raw/*.zip) down to DB-operated
-routes whose type normalizes to one of gtfs_ingest.LINE_TYPES and whose
-trips touch at least one of our corridor stations, then writes the result
-as a standalone scoped GTFS directory. gtfs_ingest.py's existing,
-fixture-tested parse_stations/parse_lines/parse_legs functions consume that
-scoped directory completely unchanged -- scoping is a distinct stage that
-runs before ingestion, not a modification to the ingestion logic itself.
+Per DATA_SPEC.md §3 step 2. Filters a downloaded feed (fv_free or rv_free,
+extracted from data/raw/*.zip) down to DB-operated routes whose type
+normalizes to a gtfs_ingest.LINE_TYPES member and whose trips touch a
+corridor station, writing a standalone scoped GTFS directory that
+gtfs_ingest.py then consumes unchanged.
 
-Why routes are filtered here instead of raising like gtfs_ingest.py's
-_normalize_line_type normally does: that "fail loudly" contract (DATA_SPEC
-§3.1) is for lines we've already decided belong in the output. A national
-feed legitimately contains services this app was never scoped to support --
-international Nightjet/railjet trains, DB regional lines branded with a
-bare route number ("27") or a metropolitan-express code ("MEX12") instead
-of the ICE/IC/RE/RB/S<digit> convention -- and those get quietly excluded
-here, not treated as a data-quality bug.
+Note this module *excludes* an unrecognized line type where gtfs_ingest
+*raises* on one -- deliberate, and explained in DATA_SPEC.md §3 step 2.
 """
 
 import csv
@@ -98,7 +87,7 @@ def scope_gtfs_feed(
     one id in corridor_stop_ids, writing the scoped feed to out_dir.
 
     corridor_stop_ids are raw GTFS stop_ids (id_crosswalk.py's keys) -- the
-    real parent-station nodes for our 11-station corridor.
+    real parent-station nodes for our corridor (DATA_SPEC.md §9.1).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -161,7 +150,7 @@ def scope_gtfs_feed(
 
 
 def scope_gtfs_feed_multi_day(gtfs_dir: Path, out_dir: Path, corridor_stop_ids: set[str]) -> None:
-    """Phase 3 sibling of scope_gtfs_feed() (SPEC.md §4.3): identical
+    """Warehouse-build sibling of scope_gtfs_feed() (DATA_SPEC.md §3 step 2): identical
     DB-agency / normalizable-type / corridor-touching filtering, but keeps
     every trip regardless of which service_id/date it belongs to -- no
     _active_service_ids() call, no service_date parameter at all. calendar.txt

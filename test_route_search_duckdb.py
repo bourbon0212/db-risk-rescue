@@ -1,13 +1,13 @@
-"""Tests for pipelines/route_search_duckdb.py (SPEC.md §4.3): the DuckDB-backed
+"""Tests for pipelines/route_search_duckdb.py (DATA_SPEC.md §5, §6): the DuckDB-backed
 sibling of pipelines/route_search.py's find_candidate_routes, plus the
 dynamic-calendar-date filtering and legs_by_id/transfers_by_id mutation
 contract that lets engine.py's precompute_fallback_plans/simulate_route
-consume it exactly like the Phase 1/2 in-memory path (§3.5).
+consume it exactly like the in-memory path (SPEC.md §3.5).
 
 Builds a small synthetic warehouse by hand via pipelines/warehouse_writer.py
 -- same station/leg/transfer shape as test_route_search.py's
 synthetic_dataset fixture, translated into date-agnostic templates plus a
-calendar, so the calendar-filtering behavior (the part with no Phase 1/2
+calendar, so the calendar-filtering behavior (the part with no Mock/Snapshot
 equivalent) can be tested precisely.
 """
 
@@ -255,7 +255,7 @@ def test_calendar_window_returns_min_and_max(synthetic_warehouse):
 def test_precompute_fallback_plans_and_simulate_route_work_against_duckdb(synthetic_warehouse):
     """Full integration: engine.py's precompute_fallback_plans/simulate_route,
     driven by a route_search_fn closure over route_search_duckdb, must
-    behave exactly like the Phase 1/2 in-memory path -- proving §3.5's
+    behave exactly like the in-memory path -- proving §3.5's
     promise that the simulation core needs no changes to consume this
     backend."""
     legs_by_id, transfers_by_id = {}, {}

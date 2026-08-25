@@ -1,10 +1,10 @@
 """Tests for UI risk/health classification helpers and their wording.
 
 Covers SPEC.md §5.2 (Global Health) and §5.3 (Local Risk + Impact Override),
-and the wording UIUX_SPEC.md §1.3 requires: any base-Red transfer (Miss
+and the wording UIUX_SPEC.md §2.3 requires: any base-Red transfer (Miss
 likely *and* a downgraded Recoverable miss alike) shows the fallback's
-absolute arrival clock time instead of the scheduled buffer (UIUX_SPEC.md §5,
-history entries #16-#19).
+absolute arrival clock time instead of the scheduled buffer (UIUX_SPEC.md §6,
+history entry #16).
 """
 
 import inspect
@@ -41,7 +41,7 @@ def test_classify_risk_bands(miss_probability, expected):
 
 
 # ---------------------------------------------------------------------------
-# SPEC.md §5.3 — Local Risk Impact Override
+# SPEC.md §5.3 — the Impact Override
 # ---------------------------------------------------------------------------
 
 
@@ -83,7 +83,7 @@ def test_classify_global_health_bands(p85_penalty_minutes, expected):
 
 
 def test_classify_global_health_takes_only_the_p85_penalty():
-    """Structural guard for the decoupling UIUX_SPEC.md §2.3 documents: Global
+    """Structural guard for the decoupling UIUX_SPEC.md §2.4 documents: Global
     Health must not accept a transfer-count or per-transfer-probability
     argument, so a direct (0-transfer) route can't be special-cased back in
     by accident."""
@@ -92,7 +92,7 @@ def test_classify_global_health_takes_only_the_p85_penalty():
 
 
 # ---------------------------------------------------------------------------
-# UIUX_SPEC.md §1.3 — distinct wording for the Impact Override band
+# UIUX_SPEC.md §2.2 — distinct wording for the Impact Override band
 # ---------------------------------------------------------------------------
 
 
@@ -106,7 +106,7 @@ def test_mct_violation_phrase_is_distinct_from_every_other_phrase():
 
 
 # ---------------------------------------------------------------------------
-# UIUX_SPEC.md §1.3 / §5 (history #16-#18) — the fallback arrival figure
+# UIUX_SPEC.md §2.3 / §6 (history #16) — the fallback arrival figure
 # shows an absolute clock time, deliberately distinct from Safe/Tight's bare
 # "<Y> min" (scheduled buffer)
 # ---------------------------------------------------------------------------
@@ -235,7 +235,7 @@ def test_itinerary_html_still_shows_buffer_for_safe_and_tight_connections():
 
 
 # ---------------------------------------------------------------------------
-# SPEC.md §3.6.4 -- final 5-phrase MCT wording (no standalone caption, no
+# UIUX_SPEC.md §2.2 -- final 5-phrase MCT wording (no standalone caption, no
 # "MCT" text anywhere in the rendered HTML). below_mct is engine-authoritative
 # (engine.TransferRisk.below_mct, set by simulate_route's MCT gradient floor)
 # -- the UI trusts it directly rather than recomputing anything itself.
@@ -289,7 +289,7 @@ def test_itinerary_html_keeps_recoverable_miss_wording_when_below_mct_but_fallba
     """below_mct + base-High but the Impact Override fires (a cheap
     fallback exists) -- must keep the reassuring "Recoverable miss" phrase,
     not swap to "Unrealistic transfer". No MCT-specific text of any kind --
-    the reassuring phrase alone is the whole story, per SPEC.md §3.6.4."""
+    the reassuring phrase alone is the whole story, per UIUX_SPEC.md §2.2."""
     route, legs_by_id, transfers_by_id, stations_by_id, lines_by_id, transfer_risks = (
         _single_transfer_route_fixtures(miss_probability=0.90, impact_minutes=10.0, below_mct=True)
     )
@@ -302,7 +302,7 @@ def test_itinerary_html_keeps_recoverable_miss_wording_when_below_mct_but_fallba
 
 
 # ---------------------------------------------------------------------------
-# SPEC.md §7's proposed platform-info extension -- transfer-strip platform pair
+# SPEC.md §2.3's platform info -- transfer-strip platform pair
 # ---------------------------------------------------------------------------
 
 

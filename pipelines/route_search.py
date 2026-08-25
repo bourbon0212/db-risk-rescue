@@ -1,26 +1,10 @@
 """On-demand candidate Route generation (DATA_SPEC.md §5, §8 build sequence
 step 6).
 
-v1 scope, deliberately modest and symmetric with the rest of this app's
-"don't over-engineer" ethos (DATA_SPEC.md §5), extended once from "1
-transfer max" to "2 transfers max" once the network grew large enough for
-one-transfer journeys to leave real station pairs (e.g. Berlin Hbf <->
-Leipzig Hbf) unreachable despite the underlying Leg/Transfer graph
-connecting them fine (see pipelines/id_crosswalk.py's module docstring):
-  - Direct legs (no transfer) between origin and destination, departing at
-    or after the requested time.
-  - Single-transfer journeys: leg A out of the origin, a transfer, leg B
-    into the destination.
-  - Two-transfer journeys: leg A out of the origin, a transfer, leg B, a
-    second transfer, leg C into the destination.
-
-Still explicitly NOT in scope: 3+ transfer journeys, full graph
-pathfinding/Dijkstra, or "best alternative on miss" re-routing -- deferred
-in SPEC.md §7, unchanged by this extension. engine.py's simulate_route()
-already chains delays/buffers/miss-probabilities generically over however
-many legs and transfers a Route has (see test_multi_transfer_routing.py),
-so this module is the only thing that needed to change to unlock 2-hop
-journeys -- the simulation side needed no modification.
+Enumerates direct, 1-transfer and 2-transfer journeys departing at or after
+the requested time, and guarantees every candidate is a simple path (no
+station visited twice). Scope and its rationale: DATA_SPEC.md §5. What's
+deliberately out of scope (3+ transfers, full pathfinding): SPEC.md §8.2.
 """
 
 from collections import defaultdict

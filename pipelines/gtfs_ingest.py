@@ -1,6 +1,6 @@
 """GTFS.DE static feed ingestion into Station/Line/Leg/Transfer models.
 
-Per DATA_SPEC.md Section 3 and Section 8 (build sequence steps 1-2).
+Per DATA_SPEC.md §3 and §8 (build sequence steps 1-2).
 """
 
 import csv
@@ -27,7 +27,7 @@ _ROUTE_TYPE_FALLBACK = {
     "109": "S-Bahn",  # Suburban Railway
 }
 
-# SPEC.md §7's proposed Minimum Connection Time extension. Neither real
+# SPEC.md §3.6.1's station-tier Minimum Connection Time classification. Neither real
 # GTFS.DE feed (gtfs_fv_latest.zip, gtfs_rv_latest.zip) ships a transfers.txt
 # or any other per-station min_transfer_time -- confirmed by listing both
 # archives directly -- so MCT here is a rule-based proxy, not feed data.
@@ -43,13 +43,13 @@ def classify_station_mct(station_touch_pairs: Iterable[tuple[str, str]]) -> dict
 
     `station_touch_pairs` is any iterable of (origin_station_id,
     destination_station_id) pairs -- one per Leg or LegTemplate -- so the
-    same classifier serves both the Phase 2 (Leg) and Phase 3 (LegTemplate)
+    same classifier serves both the Snapshot (Leg) and Warehouse (LegTemplate)
     build paths without depending on either type. How many leg endpoints (as
     either origin or destination) touch a station is a cheap, data-driven
     stand-in for its interchange complexity/platform-walk distance in the
-    absence of any real per-station signal. Stations at or above the 75th
-    percentile of that distribution get MCT_MAJOR_HUB_MINUTES; everyone else
-    gets MCT_STANDARD_MINUTES.
+    absence of any real per-station signal. Stations at or above
+    _MAJOR_HUB_TOUCH_PERCENTILE of that distribution get MCT_MAJOR_HUB_MINUTES;
+    everyone else gets MCT_STANDARD_MINUTES.
     """
     touch_counts: dict[str, int] = defaultdict(int)
     for origin_id, destination_id in station_touch_pairs:
@@ -166,7 +166,7 @@ def parse_lines(gtfs_dir: Path) -> list[Line]:
 def _seconds_since_midnight(time_str: str) -> int:
     """Parse a GTFS HH:MM:SS time (hours may exceed 23 for post-midnight
     trips) into seconds since midnight of its nominal service day -- the
-    date-agnostic form Phase 3's leg_templates store (SPEC.md §4.3), shared
+    date-agnostic form leg_templates store (DATA_SPEC.md §3 step 5), shared
     with _parse_gtfs_time below so the anchored and template-based parsers
     can't drift apart on how they read the same column."""
     hours, minutes, seconds = (int(x) for x in time_str.strip().split(":"))
@@ -204,10 +204,10 @@ def _load_stop_to_platform_map(gtfs_dir: Path) -> dict[str, str]:
     """Map every GTFS stop_id to its platform_code, "" if blank or the
     column is absent entirely (older/smaller fixtures).
 
-    Real GTFS.DE coverage is sparse -- ~14% of stops nationally, and close
-    to 0% at this corridor's major hubs specifically (confirmed against the
-    real feed) -- so most legs end up with no platform on one or both ends.
-    That's the real data, not a parsing gap; see _platform_or_none.
+    Real GTFS.DE coverage is sparse and uneven -- only a handful of this
+    corridor's stations carry it (DATA_SPEC.md §3.3), so most legs end up
+    with no platform on one or both ends. That's the real data, not a
+    parsing gap; see _platform_or_none.
     """
     mapping: dict[str, str] = {}
     with (gtfs_dir / "stops.txt").open(encoding="utf-8-sig", newline="") as f:
@@ -267,8 +267,8 @@ def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
 
 @dataclass(frozen=True)
 class TripRecord:
-    """One GTFS trip, stripped down to the fields Phase 3's date-agnostic
-    templates need to resolve calendar membership (SPEC.md §4.3)."""
+    """One GTFS trip, stripped down to the fields the date-agnostic templates
+    need to resolve calendar membership (DATA_SPEC.md §6.3)."""
 
     trip_id: str
     line_id: str
@@ -277,7 +277,7 @@ class TripRecord:
 
 @dataclass(frozen=True)
 class LegTemplate:
-    """Date-agnostic counterpart to Leg (SPEC.md §4.3): one row per
+    """Date-agnostic counterpart to Leg (DATA_SPEC.md §6.2): one row per
     consecutive stop pair, same as parse_legs() produces, but with
     departure/arrival stored as seconds-since-midnight-of-service-day
     instead of a concrete datetime, so the same row serves every date the
@@ -297,7 +297,7 @@ class LegTemplate:
 
 @dataclass(frozen=True)
 class TransferTemplate:
-    """Date-agnostic counterpart to Transfer (SPEC.md §4.3). from_trip_id/
+    """Date-agnostic counterpart to Transfer (DATA_SPEC.md §6.2). from_trip_id/
     to_trip_id are denormalized from the parent LegTemplates so a query-time
     calendar filter (both trips' service_ids active on the queried date)
     needs no join back to `trips`."""
@@ -331,8 +331,8 @@ def parse_leg_templates(gtfs_dir: Path) -> list[LegTemplate]:
     """Date-agnostic sibling of parse_legs(): walks each trip's stop_times in
     sequence exactly the same way, but emits LegTemplate rows (seconds-since-
     midnight) instead of Leg rows anchored to one service_date. Used by
-    Phase 3's warehouse build (pipelines/build_warehouse.py); parse_legs()
-    is unchanged and still backs the Phase 1/2 single-date JSON build.
+    the Warehouse build (pipelines/build_warehouse.py); parse_legs() still
+    backs the Snapshot single-date JSON build.
     """
     stop_to_station = _load_stop_to_station_map(gtfs_dir)
     stop_to_platform = _load_stop_to_platform_map(gtfs_dir)
@@ -393,19 +393,10 @@ def _walk_corridor_legs(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[_Co
     just the stops touching a corridor station (order preserved), then pair
     up each consecutive corridor stop with the next.
 
-    This is the fix for a real bug: parse_legs/parse_leg_templates emit a
-    leg per *physically*-consecutive stop pair, so a real train's journey
-    between two corridor hubs with even one non-corridor stop in between
-    (near-universal on long-distance runs) produced legs where neither
-    endpoint was a corridor station -- and a later "keep only corridor-to-
-    corridor legs" filter then threw all of them away, silently
-    disconnecting the hubs entirely rather than just modeling extra stops.
-    Measured against the real GTFS.DE fv feed: that adjacency-only approach
-    dropped 84% of leg segments and fully disconnected ~1,000 of ~4,200
-    long-distance trips from the corridor graph. Walking the *corridor-
-    filtered* subsequence instead -- skipping over non-corridor stops rather
-    than being blocked by them -- keeps the hub-to-hub connection while
-    still storing only real corridor stops as leg endpoints.
+    Walking the *corridor-filtered* subsequence rather than physically
+    adjacent stop pairs is what keeps hub-to-hub connections alive when a
+    trip calls at non-corridor stops in between. It fixes a bug that silently
+    dropped most of the long-distance graph -- DATA_SPEC.md §3.2.
     """
     stop_to_station = _load_stop_to_station_map(gtfs_dir)
     stop_to_platform = _load_stop_to_platform_map(gtfs_dir)
@@ -445,7 +436,7 @@ def _walk_corridor_legs(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[_Co
 
 
 def parse_corridor_legs(gtfs_dir: Path, service_date: date, corridor_stop_ids: set[str]) -> list[Leg]:
-    """Corridor-aware sibling of parse_legs() (Phase 2 JSON build path) --
+    """Corridor-aware sibling of parse_legs() (Snapshot JSON build path) --
     see _walk_corridor_legs for why this exists instead of parse_legs() plus
     a post-hoc corridor-to-corridor filter."""
     return [
@@ -465,8 +456,8 @@ def parse_corridor_legs(gtfs_dir: Path, service_date: date, corridor_stop_ids: s
 
 
 def parse_corridor_leg_templates(gtfs_dir: Path, corridor_stop_ids: set[str]) -> list[LegTemplate]:
-    """Corridor-aware sibling of parse_leg_templates() (Phase 3 warehouse
-    build path) -- see _walk_corridor_legs for why this exists instead of
+    """Corridor-aware sibling of parse_leg_templates() (Warehouse build path)
+    -- see _walk_corridor_legs for why this exists instead of
     parse_leg_templates() plus a post-hoc corridor-to-corridor filter."""
     return [
         LegTemplate(

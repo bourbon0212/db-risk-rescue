@@ -1,72 +1,11 @@
 """GTFS stop_id <-> station_id crosswalk for the scoped corridor.
 
-Per DATA_SPEC.md Section 2 (pipelines/id_crosswalk.py) and Section 8 step 4.
+Per DATA_SPEC.md §2 and §8 step 4. Corridor scope, the split-station
+many-to-one mappings, and the connector-station reasoning: DATA_SPEC.md §9.1.
 
-Phase 2 v1 originally mirrored mock_data.json's 11-station corridor
-exactly (DATA_SPEC.md §9.1), with an explicit note to "expand coverage
-later once the pipeline is trusted." This is that expansion: a "Golden 35"
--- in practice 30 -- station corridor covering the country's major ICE
-hubs and interchange points, so the network has real routing complexity
-(multi-hop journeys, real transfer density) instead of a handful of
-disconnected point-to-point legs.
-
-All station_ids and their real GTFS.DE stop_ids below were looked up
-directly against the downloaded fv_free/rv_free feeds (data/raw/gtfs_fv/,
-data/raw/gtfs_rv/), not guessed. The build_real_dataset() Station list is
-built directly from STATION_NAMES now (not mock_data.json) since the real
-corridor has deliberately outgrown Phase 1's mock station set.
-
-Several logical stations map to more than one real GTFS node, because
-DELFI models split/multi-level stations as separate top-level parents
-rather than one node with sub-areas -- found by tracing which parent
-stop_id station-visit records at each big station actually use, not by
-name search alone (name search alone misses these: e.g. Hamburg's S-Bahn
-node is named "HBF/Kirchenallee" and doesn't contain "Hamburg" at all):
-  - Frankfurt Hbf: surface node + S-Bahn tunnel level ("...tief")
-  - Stuttgart Hbf: elevated tracks ("(oben)") + underground S-Bahn/
-    regional level ("(tief)")
-  - Leipzig Hbf: surface node + City-Tunnel level ("(tief)")
-  - Berlin Hbf: DELFI's parent node is named "S+U Berlin Hauptbahnhof"
-  - Muenchen Hbf: long-distance node + S-Bahn tunnel level, oddly named
-    "Hauptbahnhof (U, Tram)" with no "Muenchen" in its own name at all
-  - Hamburg Hbf: long-distance node ("Hamburg, Hamburg Hbf") + S-Bahn
-    node ("Hamburg, HBF/Kirchenallee") -- the S-Bahn node alone carries
-    ~4x the station-visit volume of the long-distance node
-  - Erfurt Hbf: the dominant "Erfurt, Hauptbahnhof" node (1,146 visits)
-    plus a much smaller secondary "Erfurt Hbf" node (34 visits, regional
-    feed only) -- included for completeness even though minor
-  - Kassel-Wilhelmshoehe: the main node plus a secondary "Bereich Gleis
-    7/8" node for a specific platform pair (50 visits)
-
-Three targeted "connector" stations were added to unlock stations that were
-"one hop away" from the rest of the corridor. Two are confirmed working;
-one (Freilassing) turned out not to be enough on its own -- verified by
-tracing each station's real GTFS trip sequence, not assumed:
-  - Dresden-Neustadt: directly (consecutively) adjacent to both Dresden Hbf
-    and Berlin Suedkreuz -- confirmed, unlocks Dresden Hbf.
-  - Reutlingen Hbf: directly adjacent to Tuebingen Hbf (381 trips across the
-    feed's 30-day window use this pair). Confirmed working -- but only on
-    dates when that specific service pattern is active; as of 2026-08-24
-    every relevant service_id's calendar.txt window starts several days in
-    the future (a real scheduled-service gap in this feed snapshot, not a
-    bug), so Tuebingen still shows 0 legs on *that* date specifically.
-  - Freilassing: does NOT directly unlock Berchtesgaden Hbf, despite
-    looking like the obvious junction. The real branch sequence is
-    Freilassing -> Freilassing-Hofham -> Ainring -> Hammerau -> Piding ->
-    Bad Reichenhall -> Bad Reichenhall-Kirchberg -> Bayerisch Gmain ->
-    Bischofswiesen -> Berchtesgaden Hbf (8 intermediate stops), and
-    Freilassing itself isn't even consecutively adjacent to Muenchen either
-    (there's at least one more station in between toward Rosenheim).
-    Freilassing is kept in the crosswalk anyway -- it's a real, useful
-    junction in its own right -- but Berchtesgaden Hbf remains isolated.
-    Fully connecting it would need most of that 8-station chain, which
-    isn't proportionate for a single low-traffic branch terminus without
-    an explicit decision to do so.
-
-KNOWN GAP (still unresolved): Muenchen Hbf and Muenchen Marienplatz are
-still not GTFS-adjacent -- Muenchen Karlsplatz sits between them and isn't
-in this corridor. Not fixed in this expansion; would need Karlsplatz added
-as its own station or multi-hop leg-building.
+Note the mapping is many-to-one by design -- several logical stations have
+two GTFS parent nodes -- so callers must go through to_station_id() rather
+than assuming a 1:1 stop_id/station_id relationship.
 """
 
 GTFS_STOP_ID_TO_STATION_ID: dict[str, str] = {
@@ -121,7 +60,7 @@ GTFS_STOP_ID_TO_STATION_ID: dict[str, str] = {
 # Canonical display names for build_real_dataset()'s Station objects. The
 # original 11 match mock_data.json's names exactly (kept stable rather than
 # switching to the messier real feed names, same reasoning as line_id's
-# short-name-over-raw-id choice in gtfs_ingest.py); the 19 new ones use a
+# short-name-over-raw-id choice in gtfs_ingest.py); the 22 new ones use a
 # clean canonical form since there's no Phase 1 precedent to match.
 STATION_NAMES: dict[str, str] = {
     "DE_FRA_HBF": "Frankfurt(Main) Hbf",

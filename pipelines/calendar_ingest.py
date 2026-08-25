@@ -1,12 +1,12 @@
-"""GTFS calendar.txt / calendar_dates.txt ingestion for Phase 3's dynamic
-calendar (SPEC.md §4.3).
+"""GTFS calendar.txt / calendar_dates.txt ingestion for the Warehouse
+backend's dynamic calendar (DATA_SPEC.md §6).
 
 Kept deliberately separate from gtfs_ingest.py's topology parsing: these two
 files are the only place "which date is this?" enters the pipeline, and
 build_warehouse.py stores them as plain rows (pipelines/warehouse_writer.py)
 rather than collapsing them to one service_date at build time the way
-gtfs_scope.py's single-day scope_gtfs_feed() still does for the Phase 1/2
-JSON path. Active-service resolution for a given query date happens as SQL
+gtfs_scope.py's single-day scope_gtfs_feed() still does for the Snapshot
+JSON build. Active-service resolution for a given query date happens as SQL
 at route-search time (pipelines/route_search_duckdb.py), not here -- this
 module only parses the raw calendar rows.
 """

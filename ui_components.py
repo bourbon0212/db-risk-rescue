@@ -1,9 +1,9 @@
-"""Streamlit rendering helpers for the search form and route cards (SPEC.md §5).
+"""Streamlit rendering helpers for the search form and route cards.
 
-Visual system ported from the finalized UI/UX spec + design_mock.html: a white
-search card with a session-state-backed station swap, and route cards built as
-single HTML blobs (native <details>/<summary> for the itinerary, so expanding
-it never triggers a Streamlit rerun).
+Implements UIUX_SPEC.md's design system (input/output logic: SPEC.md §5): a
+white search card with a session-state-backed station swap, and route cards
+built as single HTML blobs (native <details>/<summary> for the itinerary, so
+expanding it never triggers a Streamlit rerun).
 """
 
 from datetime import date, datetime, time, timedelta
@@ -15,39 +15,45 @@ from models import Leg, Line, Route, Station, Transfer
 
 DB_RED = "#EB0016"
 
-# design_mock.html §1 tokens, ported 1:1.
+# UIUX_SPEC.md §3.1 base tokens, ported 1:1.
 INK = "#161a20"
 MUTED = "#68707c"
 FAINT = "#9aa1ab"
 LINE = "#e3e5e9"
 CARD_BG = "#ffffff"
+PAGE_BG = "#f2f3f5"
 
 RISK_TOKENS = {
     "low": {"bg": "#eaf7ee", "border": "#2e7d32", "text": "#1c6b2c"},
     "medium": {"bg": "#fff5e3", "border": "#d98c1f", "text": "#8a5300"},
     "high": {"bg": "#fdeceb", "border": "#d63a30", "text": "#a3231b"},
 }
-# Action-first wording per design_mock.html §2 notes — one phrase, one number, one buffer.
+# UIUX_SPEC.md §2.2 — the three base-band phrases. The two special-case phrases
+# (Impact Override, MCT floor) are defined below; the trailing figure that
+# follows each phrase is picked separately, by base band (UIUX_SPEC.md §2.3).
 RISK_WORDING = {"low": "Safe connection", "medium": "Tight connection", "high": "Miss likely"}
-# UIUX_SPEC.md §1.3 — distinct phrase for a base-Red transfer downgraded by the
+# UIUX_SPEC.md §2.2 — distinct phrase for a base-Red transfer downgraded by the
 # Impact Override (SPEC.md §5.3), so a high probability is never relabeled
 # with the genuine-Medium phrase.
 RISK_WORDING_OVERRIDE = "Recoverable miss"
-# SPEC.md §3.6.4 — distinct phrase for a base-Red transfer driven by the MCT
+# UIUX_SPEC.md §2.2 — distinct phrase for a base-Red transfer driven by the MCT
 # gradient floor (engine.TransferRisk.below_mct) with no rescuing fallback:
 # the cause is a physical connection time, not a statistical delay history,
 # so it must never share wording with "Miss likely".
 RISK_WORDING_MCT_VIOLATION = "Unrealistic transfer"
-# SPEC.md §5.3 — a base-Red transfer downgrades to Yellow when its precomputed
-# fallback impact is at or under this many minutes.
+# Base risk bands (SPEC.md §5.3 step 3): Green below the low ceiling, Yellow up
+# to and including the medium ceiling, Red above it.
+RISK_LOW_MAX_PROBABILITY = 0.10
+RISK_MEDIUM_MAX_PROBABILITY = 0.30
+# Impact Override (SPEC.md §5.3): a base-Red transfer downgrades to Yellow when
+# its precomputed fallback impact is at or under this many minutes.
 IMPACT_OVERRIDE_THRESHOLD_MINUTES = 15
-# SPEC.md §5.2 — card left-edge strip (Global Health), thresholded on the P85
+# Global Health (SPEC.md §5.2) — the card left-edge strip, banded on the P85
 # penalty alone, independent of transfer count or per-transfer probabilities.
 GLOBAL_HEALTH_YELLOW_MAX_MINUTES = 30
 GLOBAL_HEALTH_RED_MIN_MINUTES = 60
 
-# Line-type → DB category chip, per spec item 3 (ICE/IC = dark grey, RE/RB = light
-# grey with border, S-Bahn = DB green).
+# Line type -> train category chip class (UIUX_SPEC.md §3.2 owns the colors).
 LINE_TYPE_CHIP_CLASS = {
     "ICE": "chip-ice",
     "IC": "chip-ice",
@@ -62,9 +68,9 @@ DEFAULT_CHIP_CLASS = "chip-ice"
 
 def classify_risk(miss_probability: float) -> str:
     """SPEC.md §5.3 — base probability band, before the Impact Override."""
-    if miss_probability < 0.10:
+    if miss_probability < RISK_LOW_MAX_PROBABILITY:
         return "low"
-    if miss_probability <= 0.30:
+    if miss_probability <= RISK_MEDIUM_MAX_PROBABILITY:
         return "medium"
     return "high"
 
@@ -76,7 +82,7 @@ def classify_local_risk(miss_probability: float, impact_minutes: float) -> tuple
     is_override is True only when a base-High transfer was downgraded to
     Medium because its precomputed fallback impact is small — callers use
     that flag to pick the "Recoverable miss" wording instead of "Tight
-    connection" (UIUX_SPEC.md §1.3), since the two Yellow cases mean
+    connection" (UIUX_SPEC.md §2.2), since the two Yellow cases mean
     different things even though they share a color.
     """
     base = classify_risk(miss_probability)
@@ -89,7 +95,7 @@ def classify_global_health(p85_penalty_minutes: float) -> str:
     """SPEC.md §5.2 — Global Health: the card left-edge strip, driven solely
     by the P85 penalty (P85 True ETA - Scheduled Arrival), independent of
     transfer count or any individual transfer's miss probability. Applies
-    uniformly, including to direct (0-transfer) routes (UIUX_SPEC.md §2.3).
+    uniformly, including to direct (0-transfer) routes (UIUX_SPEC.md §2.4).
     """
     if p85_penalty_minutes <= GLOBAL_HEALTH_YELLOW_MAX_MINUTES:
         return "low"
@@ -110,17 +116,14 @@ def _delay_label(scheduled: datetime, projected: datetime) -> str:
 
 
 def _fallback_arrival_label(route_scheduled_arrival: datetime, impact_minutes: float) -> str:
-    """UIUX_SPEC.md §1.3 (history #18-#19) — shows the fallback's own
-    absolute arrival clock time rather than a relative delta, for any
-    base-Red transfer (Miss likely and a downgraded Recoverable miss alike —
-    SPEC.md §5.3's Impact Override changes the color band, not which figure
-    is relevant). A number like "+12 min" or "on time" still begs the
-    question "relative to what" (the route's own Scheduled Arrival, per
-    SPEC.md §3.4/§5.3 -- not the Monte Carlo Expected or Safest figures
-    shown elsewhere on the card); a concrete clock time sidesteps that
-    ambiguity entirely, since it's self-evidently comparable to the
-    Scheduled Arrival time already printed in the card header without the
-    reader needing to know what the number is measured against.
+    """UIUX_SPEC.md §2.3 — trailing figure for any base-Red transfer (Miss
+    likely and a downgraded Recoverable miss alike; the Impact Override
+    changes the color band, not which figure is relevant).
+
+    The fallback's own absolute arrival clock time, deliberately not a
+    relative delta: a delta leaves "relative to what?" unanswered, while a
+    clock time is directly comparable to the Scheduled Arrival already in the
+    card header. Rejected alternatives: UIUX_SPEC.md §6 #16.
     """
     fallback_arrival = route_scheduled_arrival + timedelta(minutes=impact_minutes)
     return f"arrives {fallback_arrival:%H:%M} if missed"
@@ -132,12 +135,12 @@ def _chip_class(leg: Leg, lines_by_id: dict[str, Line]) -> str:
 
 
 def inject_global_styles() -> None:
-    """Emits the app-wide <style> block once (design_mock.html §1–2, ported to CSS vars)."""
+    """Emits the app-wide <style> block once (UIUX_SPEC.md §3–§4, as CSS vars)."""
     st.markdown(
         f"""
         <style>
         :root {{
-            --ink:{INK}; --muted:{MUTED}; --faint:{FAINT}; --line:{LINE}; --card-bg:{CARD_BG};
+            --ink:{INK}; --muted:{MUTED}; --faint:{FAINT}; --line:{LINE}; --card-bg:{CARD_BG}; --page-bg:{PAGE_BG};
             --low-bg:{RISK_TOKENS["low"]["bg"]}; --low-border:{RISK_TOKENS["low"]["border"]}; --low-text:{RISK_TOKENS["low"]["text"]};
             --med-bg:{RISK_TOKENS["medium"]["bg"]}; --med-border:{RISK_TOKENS["medium"]["border"]}; --med-text:{RISK_TOKENS["medium"]["text"]};
             --high-bg:{RISK_TOKENS["high"]["bg"]}; --high-border:{RISK_TOKENS["high"]["border"]}; --high-text:{RISK_TOKENS["high"]["text"]};
@@ -145,16 +148,20 @@ def inject_global_styles() -> None:
             --db-red:{DB_RED};
         }}
 
-        /* ---- page shell: cap width so the app doesn't stretch on ultra-wide monitors ---- */
+        /* ---- page shell: off-white backdrop so white cards read as lifted
+           surfaces, plus a max-width cap so the app doesn't stretch on ultra-wide
+           monitors. .streamlit/config.toml's backgroundColor sets the same color
+           for Streamlit chrome this CSS can't reach — keep the two in sync. ---- */
+        [data-testid="stApp"], [data-testid="stMain"]{{background:var(--page-bg);}}
         [data-testid="stMainBlockContainer"]{{max-width:1050px !important; margin-left:auto !important; margin-right:auto !important;}}
 
-        /* ---- app shell (typography/geometry only — no emoji, per spec item 1) ---- */
+        /* ---- app shell: typography/geometry only, no emoji (UIUX_SPEC.md §1.2) ---- */
         .app-banner{{background:var(--db-red); border-radius:10px; padding:1.1rem 1.5rem; margin-bottom:1.5rem; display:flex; align-items:center; gap:0.9rem;}}
         .db-mark{{background:#fff; color:var(--db-red); font-weight:800; font-size:1rem; letter-spacing:.02em; border-radius:6px; padding:0.4rem 0.55rem; line-height:1;}}
         .app-banner-title{{color:#fff; font-size:1.5rem; font-weight:700; line-height:1.25;}}
         .app-banner-sub{{color:#FBD7DB; font-size:0.85rem; margin-top:2px;}}
 
-        /* ---- search card (design_mock.html §1) ---- */
+        /* ---- search card (UIUX_SPEC.md §4.1) ---- */
         .st-key-search_card{{background:var(--card-bg); border:1px solid var(--line); border-radius:12px; box-shadow:0 2px 6px rgba(20,20,30,.06); padding:18px 20px 20px;}}
         .search-title{{font-size:15px; font-weight:700; margin-bottom:14px;}}
         .search-divider{{border:none; border-top:1px solid var(--line); margin:6px 0 14px;}}
@@ -165,21 +172,19 @@ def inject_global_styles() -> None:
 
         /* Swap button: force a true 36px circle (Streamlit's own button min-height
            otherwise wins over a plain height:36px and stretches it into an oval).
-           Streamlit's own vertical_alignment="bottom" on the station-row columns
-           already lands the button flush against the *bottom* of the 40px input
-           boxes (not the labels) — a 2px margin-bottom then nudges it up from
-           flush-bottom to truly centered within that 40px box height, since a
-           36px button flush to the bottom of a 40px box sits 2px low otherwise.
+           vertical_alignment="bottom" on the station-row columns lands the button
+           flush against the *bottom* of the 40px input boxes (not the labels);
+           since a 36px button flush-bottom in a 40px box sits 2px low, a
+           margin-bottom:2px nudges it up to true center.
            Horizontally, the button's own wrapper chain (stButton, stElementContainer)
-           shrink-wraps tight to the button's 36px width, so margin:auto on the
-           button itself has no free space to distribute. The actual free space —
-           the middle column being wider than the button — lives one level up, on
-           stElementContainer as a flex-item of stVerticalBlock (the column's own
-           flex container); centering has to happen there via the .st-key-swap_stations
-           class (which targets that exact stElementContainer), not on the button.
-           The icon itself is a Material Symbol (see render_search_card), not the
-           "⇄" text glyph — text-glyph baselines vary by font/OS and can look
-           visually off-center even when the button's own box measures centered. */
+           shrink-wraps to the button's 36px width, so margin:auto on the button
+           itself has no free space to distribute — the actual free space (the
+           column being wider than the button) lives one level up, on
+           stElementContainer as a flex-item of stVerticalBlock, so centering
+           happens there via .st-key-swap_stations instead.
+           Icon is a Material Symbol (see render_search_card), not the "⇄" text
+           glyph — text-glyph baselines vary by font/OS and can look off-center
+           even when the button's own box measures centered. */
         .st-key-swap_stations{{margin-left:auto !important; margin-right:auto !important;}}
         .st-key-swap_stations button{{width:36px !important; height:36px !important; min-height:36px !important; margin-bottom:2px !important; border-radius:50% !important; padding:0 !important; background:#fff; border:1px solid var(--line); box-shadow:0 1px 2px rgba(20,20,30,.08); color:var(--muted);}}
 
@@ -195,7 +200,7 @@ def inject_global_styles() -> None:
         .st-key-search_card [data-testid="stButtonGroup"] button[aria-checked="true"]{{background:var(--ink) !important; border-color:var(--ink) !important;}}
         .st-key-search_card [data-testid="stButtonGroup"] button[aria-checked="true"] p{{color:#fff !important;}}
 
-        /* ---- route cards (design_mock.html §2) ---- */
+        /* ---- route cards (UIUX_SPEC.md §4.2) ---- */
         .card{{background:var(--card-bg); border:1px solid var(--line); border-radius:10px; overflow:hidden; box-shadow:0 1px 2px rgba(20,20,30,.04); margin-bottom:14px; border-left:4px solid var(--line);}}
         .card.strip-low{{border-left-color:var(--low-border);}}
         .card.strip-medium{{border-left-color:var(--med-border);}}
@@ -211,8 +216,8 @@ def inject_global_styles() -> None:
         /* Wide cards: Expected/Safest sit side-by-side as two single-line rows
            (name, value, delta all in one nowrap flow), divided by a dashed rule
            — this is what keeps the value+delta from breaking onto a second line
-           when the box would otherwise be squeezed. Narrow viewports (§ below)
-           fall back to a vertical stack instead. */
+           when the box would otherwise be squeezed. Narrow viewports fall back
+           to a vertical stack via the media query below. */
         .pred-rows{{display:flex; flex-direction:row; align-items:center; gap:14px;}}
         .pred-row{{display:flex; flex-direction:row; align-items:baseline; gap:6px; white-space:nowrap;}}
         .pred-row + .pred-row{{border-left:1px dashed var(--line); padding-left:14px;}}
@@ -291,7 +296,7 @@ def inject_global_styles() -> None:
 
 
 def render_header_banner(n_iterations: int) -> None:
-    """DB-style red banner. Uses a typographic "DB" mark instead of a train emoji."""
+    """DB-style red banner, with a typographic "DB" mark (UIUX_SPEC.md §1.2)."""
     st.markdown(
         f"""
         <div class="app-banner">
@@ -320,11 +325,11 @@ def render_search_card(
     calendar_range: tuple[date, date] | None = None,
     default_date: date | None = None,
 ) -> tuple[str, str, date | None, time, str]:
-    """Renders the "Plan your trip" search card (design_mock.html §1).
+    """Renders the "Plan your trip" search card (UIUX_SPEC.md §4.1).
 
     Returns (origin_id, destination_id, service_date, departure_time, sort_choice).
-    service_date is None when calendar_range isn't provided (Phase 1/2 datasets
-    are baked to a single fixed calendar date).
+    service_date is None when calendar_range isn't provided — the JSON backends
+    (Mock, Snapshot) have no calendar, so they omit the Date field entirely.
     """
     if "search_origin_id" not in st.session_state or st.session_state.search_origin_id not in station_ids:
         st.session_state.search_origin_id = default_origin_id
@@ -333,7 +338,7 @@ def render_search_card(
         or st.session_state.search_destination_id not in station_ids
     ):
         st.session_state.search_destination_id = default_destination_id
-    if "search_sort" not in st.session_state:
+    if "search_sort" not in st.session_state or st.session_state.search_sort not in sort_options:
         st.session_state.search_sort = sort_options[0]
     if calendar_range is not None:
         calendar_min, calendar_max = calendar_range
@@ -450,54 +455,38 @@ def _itinerary_html(
             transfer = transfers_by_id[transfer_id]
             risk = risk_by_transfer_id[transfer_id]
             risk_level, is_override = classify_local_risk(risk.miss_probability, risk.impact_minutes)
-            # SPEC.md §3.6.4 — a below-MCT connection can never read as fully
-            # "Safe": even when engine.py's gradient floor is too small to
-            # push the numeric probability past the low/medium threshold on
-            # its own, a scheduled buffer under the station's MCT still
-            # deserves at least a "pay attention" band. This band floor is
-            # deliberately silent about *why* -- the passenger's action
-            # (don't dawdle) is identical whether the cause is delay history
-            # or station size, so it folds into the existing "Tight
-            # connection" phrase rather than earning a separate word.
+            # Band floor (UIUX_SPEC.md §2.2): a below-MCT connection never reads
+            # as "Safe connection", even when the MCT floor alone isn't enough to
+            # lift its probability out of the low band. Silent about the cause --
+            # "don't dawdle" is the right action either way, so it reuses the
+            # plain "Tight connection" phrasing rather than earning its own.
             if risk.below_mct and risk_level == "low":
                 risk_level = "medium"
-            # A below-MCT transfer that lands base-High with no rescuing
-            # fallback is a *physical* impossibility, not a statistical one:
-            # the headline says so instead of "Miss likely". When the Impact
-            # Override applies instead (a cheap fallback exists), it stays
-            # "Recoverable miss" -- the reassuring, actionable truth wins
-            # over the diagnostic one when both are true (SPEC.md §3.6.4,
-            # UIUX_SPEC.md §1.4).
+            # Phrase fork (UIUX_SPEC.md §2.2): below-MCT and base-High with no
+            # rescuing fallback is a physical impossibility, not a statistical
+            # one, so it reads as "Unrealistic transfer". If the Impact Override
+            # fires instead, "Recoverable miss" wins -- the reassuring fact
+            # outranks the diagnostic one when both are true.
             is_mct_violation = risk.below_mct and risk_level == "high" and not is_override
             phrase = (
                 RISK_WORDING_MCT_VIOLATION
                 if is_mct_violation
                 else RISK_WORDING_OVERRIDE if is_override else RISK_WORDING[risk_level]
             )
-            # UIUX_SPEC.md §1.3 — any base-Red transfer (Miss likely *or* a
-            # downgraded Recoverable miss) shows the fallback arrival instead
-            # of the scheduled buffer: a base-Red transfer's own buffer is by
-            # definition tight, so it'd just restate "this is risky" rather
-            # than answer the question that actually matters once a miss is
-            # the likely outcome -- what happens if it's missed. Buffer stays
-            # for Safe/Tight (including a below-MCT connection folded into
-            # Tight above), where the connection is expected to hold and
-            # "how much slack" is the relevant framing -- deliberately the
-            # same plain minutes figure regardless of cause, per SPEC.md
-            # §3.6.4: a comparison figure here was tried and rejected as
-            # requiring context ("10 of what?") no passenger has in hand.
+            # Trailing figure (UIUX_SPEC.md §2.3) splits on the *base* band, not
+            # the displayed one: once a miss is expected, the buffer only restates
+            # "this is risky", so base-Red shows what happens if it's missed.
+            # Safe/Tight keep the plain buffer -- including a below-MCT connection
+            # folded into Tight above, which gets no distinguishing figure.
             is_base_high = classify_risk(risk.miss_probability) == "high"
             minutes_label = (
                 _fallback_arrival_label(route.scheduled_arrival, risk.impact_minutes)
                 if is_base_high
                 else f"{transfer.scheduled_buffer_minutes} min"
             )
-            # Platform info (SPEC.md §7's proposed extension): real GTFS.DE
-            # platform_code coverage is sparse and, at this corridor's major
-            # hubs specifically, close to 0% (confirmed against the real
-            # feed) -- shown only when both the arriving and departing leg
-            # actually have one, hidden gracefully otherwise rather than
-            # printing a placeholder for missing data.
+            # Platform info (SPEC.md §2.3): real coverage is sparse, so this is
+            # rendered only when both legs have a platform and hidden entirely
+            # otherwise -- never a placeholder for data that mostly isn't there.
             platform_html = ""
             if leg.destination_platform and downstream_leg.origin_platform:
                 platform_html = (
@@ -533,9 +522,9 @@ def render_route_card(
     transfers_by_id: dict[str, Transfer],
     lines_by_id: dict[str, Line],
 ) -> None:
-    """Renders one DB Navigator-style route card as a single HTML block, per
-    design_mock.html §2 — the itinerary's <details> toggle needs no Streamlit
-    rerun since the whole card, including its expander, is static markup."""
+    """Renders one route card as a single HTML block (UIUX_SPEC.md §4.2) — the
+    itinerary's <details> toggle needs no Streamlit rerun, since the whole card
+    including its expander is static markup (UIUX_SPEC.md §5.1)."""
     duration = format_duration(route.scheduled_departure, route.scheduled_arrival)
     n_transfers = len(route.transfers)
     ordered_legs = [legs_by_id[leg_id] for leg_id in route.legs]

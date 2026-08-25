@@ -1,4 +1,4 @@
-"""DuckDB connection helper for the Phase 3 warehouse (SPEC.md §4.3). No
+"""DuckDB connection helper for the Warehouse backend (DATA_SPEC.md §6). No
 Streamlit dependency -- kept pure/testable, mirroring data_loader.py's role
 for the JSON path."""
 

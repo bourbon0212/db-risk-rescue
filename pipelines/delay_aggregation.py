@@ -1,6 +1,6 @@
 """Delay-distribution aggregation from historical piebro delay records.
 
-Per DATA_SPEC.md Section 4 and Section 8 (build sequence step 3). Input is a
+Per DATA_SPEC.md §4 and §8 (build sequence step 3). Input is a
 pandas DataFrame of one row per historical leg-occurrence, already carrying
 line_id/line_type (the id_crosswalk.py join happens upstream, in build
 sequence step 4). Reading the actual monthly Parquet archive is a thin

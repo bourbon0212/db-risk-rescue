@@ -274,7 +274,7 @@ def test_precompute_fallback_plans_rejects_candidate_below_station_mct(dynamic_f
     """BC_ALT's entry connection at B is a 10-minute buffer (AB's scheduled
     arrival 9:30 -> BC_ALT's departure 9:40) -- normally the fallback picked
     by test_precompute_fallback_plans_picks_the_faster_alternative above.
-    With B's MCT set above that buffer, SPEC.md §7's MCT enforcement must
+    With B's MCT set above that buffer, SPEC.md §3.6's MCT enforcement must
     reject it instead of offering a physically-implausible dash, leaving no
     surviving candidate (BC_ORIG, the only other option, is excluded by the
     just-missed-leg rule regardless)."""
@@ -549,7 +549,7 @@ def test_simulate_route_exposes_p85_penalty_minutes(dataset, routes_by_id):
 
 
 # ---------------------------------------------------------------------------
-# SPEC.md §7 — MCT gradient floor
+# SPEC.md §3.6.2 — MCT gradient floor
 # ---------------------------------------------------------------------------
 
 

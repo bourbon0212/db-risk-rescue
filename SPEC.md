@@ -1,119 +1,81 @@
 # DB Risk & Rescue — System Design Specification
 
-**Status:** Phases 1–3 built, tested, and merged to `main`. Structured by system concern (data model → engine → storage → UI), with phase-by-phase history kept separately in §6. See §6 for what shipped when, §7 for what's next.
-
-**Section map:** §1 Objective & System Overview · §2 Core Data Models · §3 Routing & Monte Carlo Simulation Engine · §4 Storage & Data Access Architecture · §5 Streamlit UI Specifications · §6 Milestones Retrospective · §7 Future Roadmap & Extensions (Phase 4+).
+**Status:** Phases 1–3 built, tested, merged to `main`.
+**Companion docs:** `DATA_SPEC.md` (data architecture/pipelines) · `UIUX_SPEC.md` (UI/UX design system)
+**Section map:** §1 Objective · §2 Core Data Models · §3 Engine · §4 Storage · §5 UI Spec · §6 Core Thresholds & Constants · §7 Development History & Phases · §8 Limitations & Future Work
 
 ## 1. Objective & System Overview
 
-A Streamlit application for German railway (DB) trip planning that goes beyond shortest-path routing by quantifying the risk of missed connections and surfacing a probability-aware "True Expected Time of Arrival" (True ETA), computed via Monte Carlo simulation over historical delay behavior.
+A Streamlit app for German railway (DB) trip planning that quantifies missed-connection risk and surfaces a probability-aware **True Expected Time of Arrival (True ETA)**, computed via Monte Carlo simulation over historical delay behavior.
 
-The system has three layers, each covered by its own section below:
+Four layers, each with its own section:
 
-- **Data model** (§2) — a backend-agnostic Pydantic contract (Station/Line/Leg/Transfer/Route) that everything else is built against.
-- **Engine** (§3) — risk scoring and Monte Carlo simulation over that contract, including O(1) dynamic re-routing on a missed connection.
-- **Storage** (§4) — three interchangeable backends that produce the §2 contract: a hand-authored JSON fixture, a GTFS-pipeline JSON snapshot, and a DuckDB warehouse queryable by any date. Full schema/pipeline detail lives in `DATA_SPEC.md`.
-- **UI** (§5) — the Streamlit dashboard that ties the above together.
+- **Data model** (§2) — a backend-agnostic Pydantic contract (Station/Line/Leg/Transfer/Route).
+- **Engine** (§3) — risk scoring + Monte Carlo simulation over that contract, with O(1) dynamic re-routing on a missed connection.
+- **Storage** (§4) — three interchangeable backends producing the §2 contract. Full detail: `DATA_SPEC.md`.
+- **UI** (§5) — the Streamlit dashboard. Full visual/wording detail: `UIUX_SPEC.md`.
 
 ## 2. Core Data Models (Pydantic Contracts)
 
-The shapes below are `models.py`'s Pydantic contract — the *only* interface `engine.py`'s simulation and `ui_components.py`'s rendering consume. All three storage backends (§4) produce these exact objects at query time; a backend that can't produce this shape is wrong, not the model.
+`models.py`'s Pydantic contract is the *only* interface `engine.py` and `ui_components.py` consume. All storage backends (§4) produce these exact objects at query time.
 
 ### 2.1 Station
 
 ```json
-{
-  "station_id": "DE_FRA_HBF",
-  "name": "Frankfurt(Main) Hbf",
-  "mct_minutes": 5
-}
+{"station_id": "DE_FRA_HBF", "name": "Frankfurt(Main) Hbf", "mct_minutes": 5}
 ```
 
-`mct_minutes` (default 5) is this station's Minimum Connection Time, assigned by station-tier classification at ingestion time (§3.6.1) — not looked up from the feed, since neither real GTFS.DE feed carries a per-station value. It lives on Station, not Transfer (§2.4), because it's a property of the physical station itself, independent of which two legs happen to be connecting through it on a given journey.
+`mct_minutes` (default 5) is the station's Minimum Connection Time, assigned by station-tier classification at ingestion (§3.6.1, values in §6) — not feed data. Lives on Station, not Transfer, since it's a property of the physical station, not of any specific pair of legs through it.
 
 ### 2.2 Line
 
 ```json
-{
-  "line_id": "ICE_15",
-  "type": "ICE",
-  "operator": "DB Fernverkehr"
-}
+{"line_id": "ICE_15", "type": "ICE", "operator": "DB Fernverkehr"}
 ```
 
 ### 2.3 Leg
 
-A leg is one uninterrupted ride on one train. Delay behavior is modeled as an **empirical probability distribution over discrete delay buckets** (minutes late), reflecting how DB historical punctuality stats are typically published, and directly samplable in Monte Carlo without curve-fitting.
+One uninterrupted ride on one train. Delay is modeled as an **empirical probability distribution over discrete delay buckets** (minutes late) — matches how DB publishes punctuality stats, and is directly samplable without curve-fitting.
 
 ```json
 {
-  "leg_id": "L1",
-  "line_id": "ICE_15",
-  "origin_station_id": "DE_FRA_HBF",
-  "destination_station_id": "DE_KOL_HBF",
-  "scheduled_departure": "2026-08-23T09:02:00",
-  "scheduled_arrival": "2026-08-23T10:14:00",
-  "delay_distribution_minutes": {
-    "0": 0.60,
-    "5": 0.20,
-    "15": 0.12,
-    "30": 0.06,
-    "60": 0.02
-  },
-  "origin_platform": "7",
-  "destination_platform": "3"
+  "leg_id": "L1", "line_id": "ICE_15",
+  "origin_station_id": "DE_FRA_HBF", "destination_station_id": "DE_KOL_HBF",
+  "scheduled_departure": "2026-08-23T09:02:00", "scheduled_arrival": "2026-08-23T10:14:00",
+  "delay_distribution_minutes": {"0": 0.60, "5": 0.20, "15": 0.12, "30": 0.06, "60": 0.02},
+  "origin_platform": "7", "destination_platform": "3"
 }
 ```
 
-Constraint: bucket probabilities for a leg must sum to 1.0. Buckets represent "delay is *at least* this many minutes" in cumulative-from-zero terms when read as a CDF (see §3.1).
+Bucket probabilities must sum to 1.0. A realized delay is filed under the largest boundary not exceeding it, so bucket `15` holds delays of 15–29 minutes (`DATA_SPEC.md` §4). §3.1 reads the buckets above a transfer's buffer as a tail sum.
 
-`origin_platform`/`destination_platform` (both nullable, default `null`) carry the GTFS `platform_code` for this leg's departure/arrival stop, where the feed provides one. Real GTFS.DE coverage is sparse overall and, at this corridor's major hubs specifically, close to 0% (confirmed against the real feed, §6.5) — most legs have `null` on one or both ends by design, not a parsing gap. `ui_components.py` only renders a platform pair in the transfer strip when both the arriving and departing leg have one; otherwise it's hidden entirely rather than shown as a placeholder.
+`origin_platform`/`destination_platform` (nullable) carry GTFS `platform_code` where the feed has one — real but uneven coverage, concentrated in a few corridor stations (`DATA_SPEC.md` §3.3). `ui_components.py` renders a platform pair only when both legs of a transfer have one; otherwise hidden, not placeholder text.
 
 ### 2.4 Transfer
 
-A transfer connects the arrival of leg N to the departure of leg N+1 at a shared station. `scheduled_buffer_minutes` itself stays a pure schedule fact — §3.1's analytic miss probability still reads it exactly as before. Minimum Connection Time is deliberately *not* a field here: it's a property of the station (§2.1's `mct_minutes`), not of any specific transfer through it, and is applied downstream by the engine (§3.6), not baked into this model.
+Connects leg N's arrival to leg N+1's departure at a shared station.
 
 ```json
-{
-  "transfer_id": "T1",
-  "station_id": "DE_KOL_HBF",
-  "from_leg_id": "L1",
-  "to_leg_id": "L2",
-  "scheduled_buffer_minutes": 12
-}
+{"transfer_id": "T1", "station_id": "DE_KOL_HBF", "from_leg_id": "L1", "to_leg_id": "L2", "scheduled_buffer_minutes": 12}
 ```
 
-`scheduled_buffer_minutes` is derived from the timetable: `L2.scheduled_departure - L1.scheduled_arrival`, expressed in minutes, and stored directly rather than recomputed at runtime.
+`scheduled_buffer_minutes` = `L2.scheduled_departure - L1.scheduled_arrival`, stored not recomputed. It's a pure schedule fact — Minimum Connection Time is deliberately *not* a field here; it's applied downstream from Station (§3.6), not baked into the transfer.
 
 ### 2.5 Route
 
-A route is an ordered sequence of legs and the transfers between them, representing one candidate journey option returned to the UI.
-
 ```json
 {
-  "route_id": "R1",
-  "legs": ["L1", "L2"],
-  "transfers": ["T1"],
-  "origin_station_id": "DE_FRA_HBF",
-  "destination_station_id": "DE_BER_HBF",
-  "scheduled_departure": "2026-08-23T09:02:00",
-  "scheduled_arrival": "2026-08-23T13:40:00"
+  "route_id": "R1", "legs": ["L1", "L2"], "transfers": ["T1"],
+  "origin_station_id": "DE_FRA_HBF", "destination_station_id": "DE_BER_HBF",
+  "scheduled_departure": "2026-08-23T09:02:00", "scheduled_arrival": "2026-08-23T13:40:00"
 }
 ```
 
-Single-leg routes (no transfer) simply have an empty `transfers` array.
+Single-leg routes have an empty `transfers` array.
 
 ### 2.6 Service Frequency Reference Table
 
-There is no full timetable to query for "what's the next train" — even Phase 3's DuckDB warehouse (§4.3) only knows about legs that actually exist in the ingested feed, not a generic frequency model. To resolve missed connections (§3.2 Step 4), service frequency is modeled as a **static lookup keyed by each Line's existing `type` field**, not as a new per-line or per-line-instance field:
-
-| Line type | Assumed headway (minutes) |
-|---|---|
-| ICE / IC | 60 |
-| RE / RB | 60 |
-| S-Bahn | 20 |
-
-This table is a fixed constant in the simulation engine (`engine.SERVICE_FREQUENCY_MINUTES`), not derived from any data source, keeping the algorithm's "how often does this line run" notion simple and tunable independent of which backend produced the route. Values are placeholders, sanity-checked against real DB frequencies but not empirically fit.
+No full timetable to query "what's the next train" — service frequency is a static lookup keyed by `Line.type` (values: §6), used to resolve missed connections (§3.2 step 4). Fixed constant in the engine (`engine.SERVICE_FREQUENCY_MINUTES`), not derived from data — placeholders sanity-checked against real DB frequencies, not empirically fit.
 
 ## 3. Routing & Monte Carlo Simulation Engine
 
@@ -123,95 +85,91 @@ Direct CDF lookup against the upstream leg's delay distribution:
 
 ```
 P(miss | transfer T) = P(delay_from_leg > T.scheduled_buffer_minutes)
-                      = sum of delay_distribution_minutes[bucket]
-                        for every bucket > T.scheduled_buffer_minutes
+                      = sum of delay_distribution_minutes[bucket] for every bucket > buffer
 ```
 
-Example: buffer = 12 min, upstream leg's distribution `{"0": .60, "5": .20, "15": .12, "30": .06, "60": .02}` → `P(miss) = .12 + .06 + .02 = 0.20`.
-
-This value is what drives the risk color-coding on the UI timeline (§5.3).
+Example: buffer=12, distribution `{0:.60, 5:.20, 15:.12, 30:.06, 60:.02}` → `P(miss) = .12+.06+.02 = 0.20`. Drives the risk color-coding on the UI timeline (§5.3, `UIUX_SPEC.md` §2).
 
 ### 3.2 Monte Carlo Simulation (per route, per run)
 
-For each route, run N iterations (default N = 1,000). Each iteration:
+N iterations (default: §6). Each iteration:
 
-1. For every leg in the route, independently sample a realized delay from that leg's `delay_distribution_minutes` (independent per-leg sampling — no cross-leg correlation; see §7).
-2. Walk the route leg-by-leg. At each transfer, compare realized arrival time of the upstream leg against the downstream leg's scheduled departure.
-3. **If the connection holds** (realized arrival + buffer check passes): carry the realized delay forward and continue.
-4. **If the connection is missed**: first try dynamic re-routing (§3.4); if no fallback route is available, resolve by computing the **next periodic departure of the downstream leg's line**. Treat the downstream leg's own `scheduled_departure` as an anchor slot, and its line `type` as the key into the Service Frequency Reference Table (§2.6) to get headway `F`. The next available departure is:
-
+1. Independently sample a realized delay per leg from its `delay_distribution_minutes` (no cross-leg correlation — §8.1).
+2. Walk leg-by-leg; at each transfer, compare realized upstream arrival against the downstream leg's scheduled departure.
+3. **Connection holds**: carry the realized delay forward.
+4. **Connection missed**: try dynamic re-routing (§3.4) first; if no fallback, compute the next periodic departure of the downstream line using its `type`'s headway `F` (§2.6, §6):
    ```
-   next_departure = leg.scheduled_departure + F * ceil(
-       (realized_arrival_time - leg.scheduled_departure) / F
-   )
+   next_departure = leg.scheduled_departure + F * ceil((realized_arrival_time - leg.scheduled_departure) / F)
    ```
+   Added wait is added to the running arrival time; the walk continues from `next_departure` (freshly sampled).
+5. Record the final realized arrival time.
 
-   The added wait (`next_departure - realized_arrival_time`) is added to the running arrival time, and the walk continues from `next_departure` (the replacement departure's own delay distribution is then sampled fresh for the remainder of that leg).
-5. Record the final realized arrival time for that iteration.
+### 3.3 True ETA (output per route)
 
-### 3.3 True Expected ETA (output per route)
+After N iterations: **Mean True ETA** (typical expectation) and **P85/P90 True ETA** (plan-for-this-if-unlucky). These, plus per-transfer miss probabilities (§3.1), feed the UI (§5).
 
-After N iterations, report:
-
-- **Mean True ETA** — average of all simulated final arrival times. The "typical" expectation.
-- **P85 / P90 True ETA** — the 85th/90th percentile of simulated final arrival times. The "plan for this if you're unlucky" figure.
-
-Both values, plus the per-transfer miss probabilities from §3.1, are what the UI renders (§5).
+Each transfer also reports a **`simulated_miss_rate`** — the fraction of iterations that actually missed it, counted only on the route's own transfers. Nothing renders it; it exists as the empirical check on §3.6.3's math, since it should converge to `max(analytic, mct_floor)`, and the test suite asserts exactly that.
 
 ### 3.4 Dynamic Re-routing on Miss (Fallback Caching)
 
-When §3.2 Step 4 triggers (a transfer is missed), rather than always waiting for the next periodic departure of the *same* downstream line, first search for a better alternative: the best candidate route from the missed transfer's station to the journey's final destination, using the route search (`DATA_SPEC.md` §5) subject to a **reduced remaining transfer budget** (the app-wide 2-transfer cap, minus the transfers already used reaching the missed connection). If such a route exists, the simulation switches onto it for the remainder of that iteration; if none exists, it falls back to the same-line-headway wait (§3.2 Step 4) unchanged.
+When §3.2 step 4 triggers, the simulation looks for a better alternative from the missed station to the final destination, switching onto it for the rest of that iteration. If no candidate survives, it falls back to the same-line-headway wait unchanged.
 
-This route search is **not** re-run per Monte Carlo iteration — it is prohibitively expensive at N=1,000+ iterations. Instead, for a given route, the best fallback (if any) is **pre-computed once per transfer node before the simulation loop starts** (`engine.precompute_fallback_plans`), and each iteration performs only an O(1) cache lookup on miss.
+**The search runs once per transfer node, never per iteration.** `engine.precompute_fallback_plans` resolves every transfer's best alternative before the Monte Carlo loop starts, so a miss costs an O(1) cache lookup rather than a fresh pathfinding query — the difference between one search and N=1,000 of them.
 
-Scope boundary: this is one level of re-routing. If a transfer *within* a fallback route is itself missed, that nested miss resolves via the same-line-headway wait (§3.2 Step 4), not a second re-routing search — unbounded recursive re-pathfinding remains deferred (§7).
+A candidate must clear all three filters:
 
-**Impact-Weighted UI Override input.** The same precomputed `FallbackPlan` also feeds the UI's Local Risk Impact Override (§5.3): for a given transfer node, `impact_minutes = fallback_plan.route.scheduled_arrival - route.scheduled_arrival` when `precompute_fallback_plans` found a plan; when it returned `None` (no candidate route survived the remaining-transfer-budget filter), the override falls back to the same-line-headway wait computed in §3.2 Step 4 instead. Because the fallback plan is already cached before the simulation loop starts, reading it for the UI costs the same O(1) lookup the simulation itself performs on a miss — the override adds no new computation, only a new consumer of an existing cache.
+| Filter | Rule | Why |
+|---|---|---|
+| Transfer budget | `len(candidate.transfers) ≤ MAX_TOTAL_TRANSFERS − (i + 1)` for the transfer at index `i` | Boarding the fallback is itself a transfer, so it consumes one of the app-wide cap's slots (§6) alongside the `i` already used getting here |
+| Not the missed leg | The candidate can't start by boarding the very leg just missed | That train has already departed without the passenger |
+| Station MCT | Upstream leg's scheduled arrival → candidate's first departure must be ≥ the station's `mct_minutes` | A physically implausible dash is never *offered* as a rescue |
+
+MCT is a **hard veto** here, deliberately not §3.6.2's gradient floor: discarding one candidate among many is a different decision from scoring a transfer that must be displayed, so there's no need to soften it. Among survivors the earliest-arriving candidate wins, with `route_id` as a deterministic tie-break.
+
+Scope: one level of re-routing. A miss *within* a fallback route resolves via headway wait, not a second search (§8.2).
+
+**UI Impact Override input.** The same `FallbackPlan` feeds the UI's Impact Override (`UIUX_SPEC.md` §2): `impact_minutes = fallback_plan.route.scheduled_arrival - route.scheduled_arrival` when a plan exists; otherwise falls back to the headway-wait figure from step 4. Reading it for the UI is the same O(1) lookup the simulation already performs — no new computation.
 
 ### 3.5 Backend-Agnostic Fallback Search & the O(1) Guarantee
 
-`precompute_fallback_plans` (§3.4) doesn't know or care which storage backend (§4) answers its route search — it takes an optional `route_search_fn(origin_id, destination_id, departure_time) -> list[Route]` callback; omitting it falls back to the default in-memory search over a loaded `MockDataset`. This is what let the DuckDB backend (§4.3) plug in without changing `precompute_fallback_plans`'s control flow, or `simulate_route`'s hot loop, at all:
+`precompute_fallback_plans` takes an optional `route_search_fn(origin_id, destination_id, departure_time) -> list[Route]`; omitting it defaults to an in-memory search over a loaded `MockDataset`. This let the DuckDB backend (§4) plug in without touching `precompute_fallback_plans` or `simulate_route`'s hot loop:
 
-- The O(1)-per-iteration guarantee holds regardless of backend: fallback search still runs exactly once per transfer node before the Monte Carlo loop, never inside it. Whether that one-time call queries an in-memory list or DuckDB changes its cost, not its *count* — the number of calls is bounded by (candidate routes × transfers per route), independent of N.
-- `simulate_route`'s per-iteration sampling never touches a database — it consumes plain in-memory `Leg`/`Transfer` objects assembled once per search (§4.1).
-- Verified end-to-end by `test_route_search_duckdb.py`'s integration test, which drives `precompute_fallback_plans` + `simulate_route` against a DuckDB-backed `route_search_fn` and checks the same outputs the in-memory path produces.
+- §3.4's O(1) guarantee survives the swap, because it depends on *how many times* the search is called — bounded by (candidate routes × transfers per route), independent of N — not on what answers it. A DuckDB query is slower than a list scan, but it runs the same number of times.
+- `simulate_route`'s per-iteration sampling never touches a database either way.
+- Verified end-to-end by `test_route_search_duckdb.py`.
 
-For the JSON backend specifically, `precompute_fallback_plans` also accepts an optional `search_indexes` — a `pipelines.route_search.build_route_search_indexes(dataset)` result (`legs_by_id`/`transfers_by_from_leg`) — passed straight through to its default `find_candidate_routes` call. Without it, every fallback sub-search rebuilt both lookup tables from scratch over the full dataset; a 5-route batch with 2 transfers each did that ~11 times over `real_dataset.json`'s ~6,000 legs / ~69,000 transfers. `app.py` builds these indexes once per search batch (`get_search_indexes`, cached per dataset path) and reuses them for the top-level search and every fallback sub-search — an O(1)-per-call-count optimization same as the batching above, just for the JSON path's index cost instead of the DuckDB path's query count.
+For the JSON backend, `precompute_fallback_plans` also accepts prebuilt `search_indexes` (`pipelines.route_search.build_route_search_indexes`), reused across the top-level search and every fallback sub-search instead of rebuilding lookup tables from scratch each time — same O(1)-per-call-count discipline, applied to index cost instead of query count.
 
 ### 3.6 Minimum Connection Time (MCT) & the Gradient Risk Floor
 
-§2.4's `scheduled_buffer_minutes` captures the *scheduled* gap between two legs, but says nothing about whether a human can physically make that transfer even if both trains run exactly on time — a 3-minute change at a station whose platforms are hundreds of meters apart is unrealistic regardless of historical punctuality. Left unaddressed, a below-MCT transfer at a punctual line's station could render as `Safe connection` purely because §3.1's analytic miss probability never looks at the station at all. This section (formerly §7's proposed extension) closes that gap.
+§2.4's `scheduled_buffer_minutes` says nothing about whether a human can physically make a transfer even on time — a 3-minute change at a station with distant platforms is unrealistic regardless of punctuality. Left unaddressed, a below-MCT transfer at a punctual line's station could render as `Safe connection` since §3.1 never looks at the station at all.
 
 #### 3.6.1 Station-tier MCT (the "5/10 minute rule")
 
-Every Station carries `mct_minutes` (§2.1), assigned at ingestion time by `pipelines.gtfs_ingest.classify_station_mct`. Neither real GTFS.DE feed (`gtfs_fv_latest.zip`, `gtfs_rv_latest.zip`) ships a `transfers.txt` or any other per-station `min_transfer_time` — confirmed by listing both archives directly — so this is a rule-based proxy, not feed data:
+Every Station carries `mct_minutes` (§2.1), assigned at ingestion by `pipelines.gtfs_ingest.classify_station_mct`. Neither real GTFS.DE feed ships a `transfers.txt`/`min_transfer_time` (confirmed against both archives) — this is a rule-based proxy, not feed data:
 
-- Count how many leg endpoints (as either origin or destination) touch each station across the ingested network — a cheap stand-in for interchange complexity/platform-walk distance in the absence of real platform geometry.
-- Stations at or above the 75th percentile of that touch-count distribution are classified **major hubs**: `mct_minutes = 10`.
-- Every other station gets `mct_minutes = 5` — the standard tier, and also what a Station without an explicit value defaults to (e.g. `mock_data.json`'s hand-authored fixture stations).
+- Count leg endpoints (origin or destination) touching each station — a stand-in for interchange complexity in the absence of platform geometry.
+- Stations at/above the 75th percentile of that distribution: **major hub**, `mct_minutes` = §6's hub value.
+- Everyone else: `mct_minutes` = §6's standard value (also the Station default, e.g. `mock_data.json`).
 
-An earlier proposal considered lowering these thresholds (10→5, 5→3) to make enforcement less aggressive. Rejected: the touch-count classifier is already only a proxy for interchange complexity, not real platform geometry, so shrinking the threshold throws away the one signal available (touch-count correlates with station size) without adding new information — it doesn't fix the actual problem, which §3.6.2 addresses instead.
+A proposal to lower these thresholds was rejected: the touch-count classifier is already only a proxy, so shrinking the threshold discards the one signal it has without fixing the actual problem — which §3.6.2 addresses instead.
 
 #### 3.6.2 Gradient risk floor, not a hard veto
 
-A transfer whose `scheduled_buffer_minutes` is below its station's `mct_minutes` is not rejected outright. Because the touch-count MCT proxy is approximate, treating "below MCT" as a binary impossibility would kill genuinely fine cross-platform transfers on nothing more than a coarse hub/standard split. Instead, `engine.mct_violation_floor(buffer_minutes, mct_minutes)` computes a floor that scales *linearly* with how far under MCT the buffer is:
+A below-MCT transfer isn't rejected outright — the proxy is approximate, so treating "below MCT" as a binary impossibility would kill genuinely fine cross-platform transfers on a coarse hub/standard split. `engine.mct_violation_floor(buffer_minutes, mct_minutes)` scales *linearly* with how far under MCT the buffer is:
 
 ```
 deficit_fraction = clamp((mct_minutes - buffer_minutes) / mct_minutes, 0, 1)
-mct_floor         = deficit_fraction * MCT_VIOLATION_MAX_FLOOR   # 0.95
+mct_floor         = deficit_fraction * MCT_VIOLATION_MAX_FLOOR   # value: §6
 ```
 
-- Buffer at or above MCT: `deficit_fraction = 0` → no floor at all; purely §3.1's statistical miss probability.
-- Buffer 1 minute short of a 10-minute hub MCT: `deficit_fraction = 0.1` → floor = 0.095 — barely nudges the risk.
-- Buffer at 0 minutes (or negative) at that same hub: `deficit_fraction = 1.0` → floor = `MCT_VIOLATION_MAX_FLOOR` (0.95) — near-certain, regardless of how punctual the line's delay history is.
+Buffer at/above MCT → no floor. Buffer 1 min short of a 10-min hub MCT → floor ≈0.095 (barely nudges risk). Buffer at/below 0 → floor caps at §6's max (never 1.0 — leaves room for a genuine cross-platform sprint the model can't rule out).
 
-The floor asymptotes at 0.95, never 1.0 — deliberately leaving room for a genuine cross-platform sprint the model has no way to rule out. A transfer's *effective* miss probability, used everywhere downstream (risk classification, §3.6.4's UI wording, `TransferRisk.miss_probability`), is `max(analytic_miss_probability (§3.1), mct_floor)`: the floor only ever raises the risk, never lowers a transfer that's already statistically worse than the floor on its own.
-
-A flat floor (e.g. a constant 0.85 whenever below MCT) was considered and rejected: it reintroduces the same cliff-edge problem a hard veto has, just at a lower height — a buffer 1 minute short of MCT would jump straight to 85% miss probability, identical to a buffer of 0 minutes. The gradient avoids that discontinuity entirely.
+Effective miss probability everywhere downstream = `max(analytic_miss_probability, mct_floor)` — the floor only ever raises risk, never lowers it. A flat floor was considered and rejected: it reintroduces the same cliff-edge problem at a lower height (1 minute short of MCT would jump straight to the flat value, same as 0 minutes short).
 
 #### 3.6.3 Monte Carlo integration
 
-The floor is not a display-time patch on top of §3.1's analytic number — it is enforced *inside* `simulate_route`'s per-iteration loop, so the simulated ETA (mean/P85/P90, §3.3) and the displayed risk percentage can never tell contradictory stories (e.g. a badge reading "82% risk" beside an "Expected: on time" ETA). Precomputed once per transfer before the loop starts — same "compute once, O(1) per iteration" discipline as §3.4's fallback plans:
+Enforced *inside* `simulate_route`'s per-iteration loop, not as a display-time patch — so the simulated ETA and the displayed risk can never contradict each other. Precomputed once per transfer before the loop:
 
 ```
 extra_fail_probability = 0                                          if mct_floor <= analytic_miss_probability
@@ -220,173 +178,176 @@ extra_fail_probability = 0                                          if mct_floor
                           / (1 - analytic_miss_probability)          otherwise
 ```
 
-chosen so that, across many iterations, `P(overall miss) = analytic + (1 - analytic) * extra_fail_probability = max(analytic, mct_floor)` exactly. Per iteration, whenever the schedule check (§3.2 Step 2/3) says the connection *holds*, an additional Bernoulli draw against `extra_fail_probability` can still force a miss — representing "the train was on time, but the walk itself wasn't physically possible in the time available."
+chosen so `P(overall miss) = analytic + (1-analytic) * extra_fail_probability = max(analytic, mct_floor)` exactly. Per iteration, even when the schedule check says the connection holds, a Bernoulli draw against `extra_fail_probability` can still force a miss (the train was on time, but the walk itself wasn't physically possible).
 
-This check applies only to the route's own transfers, never to a transfer *within* a precomputed fallback plan (§3.4) — scoped by the same `current_transfers is ordered_transfers` guard `simulate_route` already uses for its miss-count bookkeeping. It also costs zero extra random draws whenever `extra_fail_probability` is 0, which is always true when `simulate_route` is called without `stations_by_id` (every pre-existing caller) — a strict no-op that keeps prior behavior bit-for-bit reproducible.
+Applies only to the route's own transfers, never inside a fallback plan. Zero extra cost when `extra_fail_probability = 0` — true for every caller that omits `stations_by_id`, keeping prior behavior bit-for-bit reproducible.
 
-#### 3.6.4 UI wording: five phrases, no separate MCT text
-
-`TransferRisk.below_mct` (True whenever `scheduled_buffer_minutes < station.mct_minutes`) lets `ui_components.py` fold MCT into the existing five-phrase risk vocabulary (§5.3) without ever surfacing a standalone "MCT" caption or a second clause — full wording rules in `UIUX_SPEC.md` §1.4. Two rules, both silent about *why*:
-
-- **Band floor at the low tier.** A below-MCT connection can never display as "Safe connection," even when the numeric risk is too small on its own to cross the low/medium threshold: `ui_components.py` bumps the displayed band from low to medium in that case, landing on the same "Tight connection" phrase (and the same plain `Y min` trailing figure) a genuinely medium-risk connection gets. The cause isn't named because the passenger's action is identical either way — don't dawdle.
-- **Phrase fork at the high tier.** A below-MCT transfer that lands in the base-High band with no rescuing fallback plan (§3.4) reads as **"Unrealistic transfer,"** not "Miss likely" — here the cause *does* change what's actionable (whether hoping for an on-time train helps at all), so it earns its own phrase. When the Impact Override (§5.3) applies instead (a cheap fallback exists), the wording *stays* "Recoverable miss," unchanged and unforked — the reassuring, actionable fact outranks the diagnostic one.
-
-An earlier iteration surfaced MCT as a standalone `"below N min MCT"` caption appended to every band, plus a distinct "Rushed connection" phrase at the low/medium tier. Both were dropped: the caption put raw engineering jargon ("MCT") in front of passengers and violated this app's own single-clause rule (`UIUX_SPEC.md` §1.3); the extra phrase turned out to be indistinguishable from "Tight connection" in practice and, once the "does the cause change the action" test was applied, didn't earn its keep the way the high-tier fork does. See `UIUX_SPEC.md` §5 history for the full trail.
+UI wording for MCT-affected transfers: `UIUX_SPEC.md` §2 — this section covers only the probability math, not how it displays.
 
 ### 3.7 Sanity Filter (Suboptimal-Path Pruning)
 
-Route search (§3, `DATA_SPEC.md` §5) finds every mathematically valid direct/1-transfer/2-transfer path departing at or after the requested time, with no notion of whether a path is a *sane* passenger choice. On a well-connected network this surfaces multi-hour detours through a distant hub (e.g. a 6h51m 2-transfer Köln→Frankfurt routed via Hannover) sorted alongside a 90-minute direct train, purely because both depart in the same window — cluttering the card list for anyone scrolling past the top results, and wasting Monte Carlo compute (§3.3, N=1,000 iterations) on a route no passenger would take.
+Route search finds every mathematically valid path with no notion of whether it's a *sane* choice — surfacing multi-hour detours (e.g. a 6h51m 2-transfer Köln→Frankfurt via Hannover) alongside a 90-minute direct train, wasting Monte Carlo compute on routes no one would take.
 
-`pipelines.route_filters.apply_sanity_filter(routes, max_duration_ratio=2.5, max_additional_minutes=150)` drops any candidate whose scheduled duration (`scheduled_arrival - scheduled_departure`) exceeds the *tighter* of two bounds against the *fastest* scheduled duration found in that same search result: `max_duration_ratio` times the fastest duration, or the fastest duration plus a flat `max_additional_minutes`. Both bounds are relative to what was actually found, not a fixed cutoff. `app.py`'s `search_routes`/`search_routes_warehouse` apply it once to the top-level result, before display-limit slicing (§5.1) and before any route in the batch is handed to `simulate_one_route`/`simulate_one_route_warehouse`.
+`pipelines.route_filters.apply_sanity_filter(routes, max_duration_ratio, max_additional_minutes)` (values: §6) drops any candidate whose scheduled duration exceeds the *tighter* of two bounds against the *fastest* duration in that search result — a ratio bound and a flat-minutes bound, both relative to what was actually found. Applied once to the top-level result, before display-limit slicing (§5.1) and before simulation.
 
-A pure ratio was tried first and shipped initially, then revisited: sweeping every connected station pair in the Phase 3 warehouse and bucketing the worst observed duration ratio by fastest-route length showed detour explosion is overwhelmingly a **short/medium-trip** problem on this network (fastest <60min: median worst ratio 15.2x, some pairs as bad as 458x) that tapers off sharply for long-haul pairs (fastest >240min: median worst ratio 1.4x, 0% of pairs even reach 2.5x) — the 2-transfer cap and real corridor connectivity self-limit how convoluted a long route can get. But one real counter-example survived a pure 2.5x cap: Nürnberg Hbf → Hannover Hbf (fastest 4h00m) has a genuine alternative cluster up to 6h36m (≤1.65x) and a separate detour cluster from 8h03m–10h03m (2.01x–2.51x) — the ratio alone only caught the single worst of those seven detours. The flat `max_additional_minutes` ceiling closes that gap for long trips without changing short-trip behavior at all: re-running the same sweep with the hybrid cap showed zero extra drops in the <60min bucket (the ratio is already the tighter constraint there), confirmed by checking Köln Hbf → München Hbf and Berlin Hbf → München Hbf, where it trims only each pair's small outlier tail (7 and 2 routes respectively) and leaves their dense legitimate-alternative cluster untouched.
+**Why two bounds and not one.** A pure ratio shipped first, then a sweep over every connected station pair showed why it isn't enough. Detour explosion is overwhelmingly a *short*-trip problem: pairs whose fastest route is under 60 min had a median worst-case ratio of 15.2x and reached 458x, while pairs over 240 min stayed tame (median 1.4x, none even reaching 2.5x) because the 2-transfer cap and real corridor connectivity bound how convoluted a long route can get.
 
-A second heuristic was considered — aggressively dropping 2+-transfer routes whenever a "plentiful" direct/1-transfer alternative exists, unless the detour offers a "significant" time advantage — and rejected: in every reported case the detours already failed on duration alone, so a third heuristic would only add two more unvalidated tuning knobs ("plentiful," "significant") without pruning anything the hybrid cap doesn't already catch. Revisit only if a real detour surfaces that survives both bounds but is still an obviously bad 2-transfer choice.
+That tameness is the trap. On a long trip a genuinely unacceptable detour barely registers as a ratio — Nürnberg Hbf → Hannover Hbf (fastest 4h00m) has a legitimate alternative cluster up to 6h36m and a separate detour cluster at 8h03m–10h03m, yet the whole detour cluster sits between 2.01x and 2.51x, so a 2.5x cap caught only the worst of seven. Six hours of avoidable travel is obviously unreasonable in absolute terms and unremarkable in relative ones, which is what the flat +150 min ceiling catches. It costs nothing on short trips, where the ratio is already the tighter bound: a re-sweep confirmed zero additional drops in the under-60-min bucket.
 
-Deliberately **not** applied inside `find_candidate_routes` itself, and **not** wired into `precompute_fallback_plans`'s per-transfer fallback search (§3.4, §3.5): that search already picks the single earliest-*arriving* candidate (`min(candidates, key=scheduled_arrival)`), which already prefers a fast, near-term option over a distant one. Its candidate pool can also legitimately span a much wider departure-time window than one top-level search page — there's no "next 5" pagination mid-fallback — so comparing every candidate's raw duration against whichever happens to be shortest risks discarding the soonest-*arriving* fallback in favor of a merely shorter-duration one departing hours later.
+Not applied inside `find_candidate_routes` itself, and not wired into fallback search (§3.4/§3.5): that search already picks the single earliest-*arriving* candidate, and its pool can legitimately span a much wider time window than one search page — comparing raw duration risks discarding the soonest-arriving fallback for a merely shorter one departing hours later.
 
 ## 4. Storage & Data Access Architecture
 
-Three interchangeable backends produce the §2 contract; `app.py`'s sidebar picks between them. Full schema and pipeline detail: `DATA_SPEC.md`.
+Three interchangeable backends produce the §2 contract; `app.py`'s sidebar picks between them. Full schema/pipeline detail: `DATA_SPEC.md`.
 
 ### 4.1 Query-Time Contract & Backend Boundary
 
-Every backend's job ends at producing `Station`/`Line`/`Leg`/`Transfer`/`Route` objects (§2) — `engine.py` and `ui_components.py` never branch on which backend is active. This boundary is what let Phase 3 replace the entire storage layer (§4.3) without touching the simulation core (§3) or the UI rendering (§5).
+Every backend's job ends at producing `Station`/`Line`/`Leg`/`Transfer`/`Route` objects — `engine.py` and `ui_components.py` never branch on which backend is active. This boundary is what let Phase 3 replace the entire storage layer without touching the simulation core or UI rendering.
 
-### 4.2 JSON Backends (Phase 1 & 2)
+### 4.2 The Three Backends
 
-- **`mock_data.json`** — hand-authored fixture data, loaded whole via `data_loader.load_dataset()`.
-- **`data/real_dataset.json`** — a GTFS.DE + piebro-delay pipeline output (`pipelines/build_dataset.py`), also loaded whole, scoped to a single fixed calendar date baked in at build time.
+- **Mock** (Phase 1, §7) — `mock_data.json`, hand-authored fixture, loaded whole. `DATA_SPEC.md` §7.
+- **Snapshot** (Phase 2, §7) — `data/real_dataset.json`, a GTFS.DE + piebro-delay pipeline output baked to one fixed calendar date, loaded whole. `DATA_SPEC.md` §7.
+- **Warehouse** (Phase 3, §7 — default) — `data/warehouse.duckdb`, date-agnostic templates + GTFS calendar, queried per-search for any date in the ingested window. `DATA_SPEC.md` §6.
 
-Both validate directly against `MockDataset` (§2) and are read with the same `load_dataset(path)` call; `app.py` only picks which path. See `DATA_SPEC.md` §7.
+**Missing-data degradation.** Only `mock_data.json` is committed; both real datasets are gitignored build outputs. If the selected backend's file is absent, `app.py` shows a sidebar warning naming the build command and falls back to Mock rather than erroring. This matters on a fresh clone or deploy: without running `python -m pipelines.build_warehouse`, the app boots and works, but on fixture data — check the sidebar warning before reading anything into the results.
 
-### 4.3 DuckDB Warehouse Backend (Phase 3)
+### 4.3 Streamlit Caching Strategy
 
-`data/warehouse.duckdb`, built by `pipelines/build_warehouse.py`, removes Phase 2's single-fixed-date constraint:
+Route search and Monte Carlo simulation are cached as **two separate stages** — `search_routes*` (search only) and `simulate_one_route*` (one route's simulation), both `@st.cache_data`.
 
-1. **Date-agnostic templates** — topology (`leg_templates`/`transfer_templates`) is stored independent of any specific calendar date (seconds-since-midnight, not a concrete datetime), so the row count doesn't multiply with the size of the ingested calendar window. One warehouse build (currently covering a full month) replaces what would otherwise be one JSON snapshot per day.
-2. **Dynamic calendar resolution** — GTFS `calendar.txt`/`calendar_dates.txt` are ingested and preserved as queryable data; which `service_id`s are active is resolved as SQL at query time (`pipelines/route_search_duckdb.py`), not collapsed into one date at build time.
-3. **Scoped, incremental loading** — `route_search_duckdb.find_candidate_routes(conn, ..., service_date, legs_by_id, transfers_by_id)` queries per search (origin + active service_ids for the date) and writes resolved objects into the caller's dicts in place, so only the network actually touched by a search — the top-level query plus each transfer's fallback search (§3.5) — ever loads into memory.
+The original combined cache was keyed on `display_limit` (§5.1's pagination window), so every "Load more" re-simulated the entire growing prefix. Splitting fixes this:
 
-The UI date picker (§5.1) is bounded to `route_search_duckdb.calendar_window()`'s min/max. Full table schema: `DATA_SPEC.md` §6.
+- `search_routes*` has no `display_limit` param — never re-run by pagination.
+- `simulate_one_route*` is keyed on `route_id` (stable, derived from leg/transfer ids) plus `n_iterations`/`seed`/dataset path (or `service_date` for the warehouse). A "Load more" revealing routes 6–10 only computes those 5.
+- Arguments that aren't part of cache identity (`_route`, `_search_indexes`, etc.) use a leading underscore so Streamlit excludes them from the hash.
+- `app.py` times both stages with `time.perf_counter()`, printed to terminal.
 
-### 4.4 Streamlit Caching Strategy
+Measured (warehouse backend, real corridor): ~1.3s to 20 loaded routes, then ~0.9s per further "Load more" — flat per-click cost.
 
-Route search and Monte Carlo simulation are cached as **two separate stages**, not one combined unit — `search_routes`/`search_routes_warehouse` (route search only) and `simulate_one_route`/`simulate_one_route_warehouse` (simulation for exactly one route). Both are `@st.cache_data`.
+## 5. Streamlit UI Specification
 
-This split exists because the original combined cache (`search_and_simulate`/`search_and_simulate_warehouse`) was keyed on `display_limit` (§5.1's pagination window), so every "Load more" click changed the cache key and re-simulated the **entire growing prefix** — revealing routes 6–10 re-ran the simulation for routes 1–5 as well. Splitting the cache means:
-
-- `search_routes*` has no `display_limit` param at all, so the search itself is never re-run by a "Load more" click.
-- `simulate_one_route*` is keyed on `route_id` (plus `n_iterations`/`seed`/the dataset path, or `service_date` for the warehouse path — a fallback sub-search's results genuinely depend on which calendar day it runs for). `route_id` is a stable, deterministic identifier for a given search's route, derived from its underlying leg/transfer ids, so it alone is a sufficient cache key on its own; a "Load more" click that reveals routes 6–10 only ever computes those 5 — routes 1–5 are pure cache hits, not re-simulated alongside them.
-- `Route`/index-tuple arguments that aren't part of the cache identity (`_route`, `_search_indexes`, `_legs_by_id`, etc.) are passed with a leading underscore so Streamlit excludes them from the cache-key hash — they're there to avoid recomputing values already in hand, not to change what counts as a cache hit ([Streamlit caching docs](https://docs.streamlit.io/develop/concepts/architecture/caching)).
-- `app.py` wraps both stages in `time.perf_counter()` and prints the elapsed time to the terminal, so a future regression in either stage is visible without re-profiling by hand.
-
-Measured end-to-end (warehouse backend, real corridor data): ~1.3s to reach 20 loaded routes, then ~0.9s per further "Load more" click — a flat per-click cost, not a growing total.
-
-## 5. Streamlit UI Specifications
+Full visual/wording spec: `UIUX_SPEC.md`. This section covers input/output *logic* only.
 
 ### 5.1 Input Flow
 
-Minimal-friction search: user selects **origin, destination, and departure time**; the DuckDB backend (§4.3) additionally exposes a **service date** field, constrained to the GTFS feed's ingested calendar window. The app auto-generates candidate routes from whichever backend is selected and runs the Monte Carlo simulation with default parameters (N = 1,000 iterations) — no advanced/simulation-tuning panel.
+User selects origin, destination, departure time; the DuckDB backend adds a service-date field (bounded to the ingested calendar window). N=§6 iterations, no tuning panel.
 
-Candidate routes are paginated via a `display_limit` session-state counter (`DISPLAY_LIMIT_STEP = 5`): the app simulates and shows only the first `display_limit` routes, with a "Load more" control that adds 5 more. `display_limit` resets to 5 whenever the search itself changes (origin, destination, departure time, or — warehouse backend — service date). Critically, routes are sliced to `display_limit` **before** the Monte Carlo loop runs, not just before rendering — simulation, not the route search, is the expensive part (§4.4), so slicing earlier is what actually saves the work rather than just hiding it. Sort/ranking within the results list operates only over the currently-loaded batch, not the full candidate pool, since ranking against not-yet-simulated routes would mean simulating them anyway and defeat pagination's purpose.
+Routes paginate via a `display_limit` session-state counter (step: §6): the app simulates/shows only the first `display_limit` routes, with "Load more" adding one step. Resets on any search-parameter change. Routes are sliced to `display_limit` **before** the Monte Carlo loop, not just before rendering — simulation, not search, is the expensive part (§4.3). Everything downstream, sorting included (§5.2), therefore sees only the loaded batch.
 
 ### 5.2 Route Comparison View
 
-A **ranked card list** of candidate routes (typically 3–5), each card showing:
+A ranked card list (typically 3–5), each showing scheduled departure/arrival + duration, Mean True ETA, P85 True ETA, transfer count.
 
-- Scheduled departure/arrival and duration
-- Mean True ETA
-- P85 True ETA (risk-adjusted)
-- Number of transfers
+**Sorting.** Two options, both ranking by *arrival time* and differing only in which arrival they trust: **Earliest scheduled** sorts on `Route.scheduled_arrival` (the timetable's answer), **Safest arrival** on `p85_eta` (the risk-adjusted one). Neither sorts on duration — a later-departing, shorter trip can rank below an earlier-departing, longer one — and the labels say "earliest" rather than "fastest" precisely so they don't imply otherwise. Ranking against unsimulated routes would mean simulating them, defeating pagination, so sorting is scoped to the loaded batch (§5.1).
 
-Cards are sortable/orderable so the user can compare "fastest scheduled" against "safest / lowest-risk" at a glance — similar to a flight-search results list.
+**Global Health** (card left-edge strip, `UIUX_SPEC.md` §3.4) is driven **solely by the P85 penalty** — `p85_penalty_minutes = P85 True ETA − Scheduled Arrival` — deliberately ignoring individual transfer probabilities. Bands: §6. It applies uniformly regardless of transfer count, including 0-transfer routes.
 
-**Global Health (card left-edge strip).** Each card additionally carries a 4px left-edge color strip (`UIUX_SPEC.md` §2.3) signaling overall route safety, driven **solely by the P85 penalty** — `p85_penalty_minutes = P85 True ETA (§3.3) − Scheduled Arrival` — and deliberately ignoring individual transfer miss probabilities:
-
-| Band | P85 penalty | Rationale |
-|---|---|---|
-| Green (Safe) | ≤ 30 min | Within normal single-leg delay variance; a route can land here even with every transfer Green, purely from ordinary delay-bucket noise |
-| Yellow (Risky) | 30–60 min | About one recoverable missed connection / one Service Frequency headway cycle (§2.6) |
-| Red (Danger) | > 60 min | Compounding misses, or a fallback that itself costs real time |
-
-This is a distinct signal from the Local Risk classification (§5.3): Global Health answers "how much slack does this route have overall," while Local Risk answers "which specific transfer should I watch." A route with an all-Green transfer timeline can still show a Yellow card edge — that's expected, not a bug: ordinary per-leg delay variance alone routinely pushes P85 into the 20–30 minute range, so the 30/60 split is calibrated against that baseline rather than against a "no risk should ever look risky" assumption. Global Health also applies uniformly regardless of transfer count — a direct (0-transfer) route is colored by its own P85 penalty like any other route, not exempted (see `UIUX_SPEC.md` §2.3 for the resulting change from the pre-Impact-Weighted-Thresholds behavior).
+Global Health and Local Risk (§5.3) answer different questions — "how much slack does this route have overall" versus "which transfer should I watch" — and are computed from unrelated inputs, so they disagree routinely. An all-Green transfer timeline under a Yellow card edge is expected, not a bug: ordinary per-leg delay variance alone pushes P85 into the 20–30 minute range without any transfer being risky.
 
 ### 5.3 Route Detail View
 
-Selecting a card opens a **horizontal timeline**: leg → transfer → leg → transfer → ..., left to right. Each transfer node is color-coded by a **Local Risk** classification — five steps from raw probability to final phrase, not probability alone:
+A horizontal timeline (leg → transfer → leg → ...), each transfer node classified by **Local Risk** — five steps from raw probability to final phrase:
 
 | Step | What happens | Defined in |
 |---|---|---|
-| 1. Compute the raw probability | `P(miss) = P(delay_from_leg > buffer)`, from the upstream leg's own delay history | §3.1 |
-| 2. Apply the MCT floor | A below-station-MCT connection gets a gradient floor added on top of the raw number, never lowering it | §3.6.2 |
-| 3. Band the result | Green `< 10%` · Yellow `10–30%` · Red `> 30%` | this section |
-| 4. Apply the Impact Override | A Red transfer with a cheap fallback (`impact_minutes` ≤ 15 min) displays Yellow instead — the number in the label is unchanged, only the color/phrase softens | this section |
-| 5. Pick the phrase | `Safe connection` / `Tight connection` / `Recoverable miss` / `Miss likely` / `Unrealistic transfer` | §3.6.4, `UIUX_SPEC.md` §1.3 |
+| 1. Raw probability | `P(miss) = P(delay > buffer)` | §3.1 |
+| 2. MCT floor | Gradient floor added, never lowers the number | §3.6.2 |
+| 3. Band the result | Green/Yellow/Red thresholds | §6 |
+| 4. Impact Override | Red + cheap fallback (`impact_minutes` ≤ threshold, §6) displays Yellow | §3.4 |
+| 5. Pick the phrase | Exact colors/phrases/conditions | `UIUX_SPEC.md` §2 |
 
-**This is a completely different metric from the card's own left-edge color.** Global Health (§5.2) is driven by the route's P85 penalty against fixed 30/60-*minute* thresholds — not by any transfer's miss probability, and not by this five-step pipeline at all. A route can show an all-Green transfer timeline and still carry a Yellow card edge, or the reverse; neither is a bug (§5.2 explains why).
+Local Risk is per-transfer and independent of the card's edge color, which is per-route (§5.2).
 
-**Step 4 in detail — the Impact Override.** If the base band (step 3) is Red, but the transfer's precomputed impact (`impact_minutes`, §3.4) is **≤ 15 min**, the displayed band downgrades to Yellow:
+## 6. Core Thresholds & Constants Reference
 
-| Impact (`impact_minutes`) | Displayed band when base is Red |
-|---|---|
-| ≤ 15 min | Yellow (override) |
-| > 15 min | Red (unchanged) |
+Every hardcoded constant in the app, in one place. If a value changes, update it here and cross-check every section above that cites it.
 
-This exists to separate genuinely fatal transfers (a long, costly wait) from statistically-red-but-practically-harmless ones (a fast reroute, or a fallback that even arrives early, already covers the miss) — without it, the transfer strip flags every >30%-miss connection identically regardless of how bad actually missing it would be.
+**Simulation**
 
-**Step 5 in detail — MCT's effect on the phrase, distinct from its effect on the number (step 2).** At the Red band, when `TransferRisk.below_mct` is True and no Impact Override rescues it, the transfer displays as a distinct fifth phrase, `Unrealistic transfer`, instead of reusing `Miss likely` — the color/band math is unchanged, only the wording differs, since the cause there is actionable (whether hoping for an on-time train helps at all). At the Green band, a below-MCT transfer is never left Green — it displays as `Tight connection` even when its numeric probability alone would round to Green — but *without* a distinct phrase or a wording change of any kind, since at that tier the cause doesn't change what the passenger should do. See §3.6.4 and `UIUX_SPEC.md` §1.4 for the full wording rules.
+| Constant | Value | Code location | Rationale |
+|---|---|---|---|
+| Monte Carlo iterations (N) | 1,000 | `app.py N_ITERATIONS` | Balances precision vs. per-search latency; no UI control (§5.1) |
+| RNG seed | 42 | `app.py RNG_SEED` | Fixed so a route's ETAs stay stable across Streamlit reruns instead of drifting on every interaction; also part of the simulation cache key (§4.3) |
+| Service frequency headway | ICE/IC 60min · RE/RB 60min · S-Bahn 20min | `engine.SERVICE_FREQUENCY_MINUTES` | Sanity-checked against real DB frequencies, not empirically fit (§2.6) |
+| Max total transfers | 2 | `engine.MAX_TOTAL_TRANSFERS`, `route_search*.py` | Raised from 1 once the network needed it for some real pairs; deliberate ceiling, not a hard limit |
 
-This five-step pipeline gives an at-a-glance risk story for that specific journey, complementing the Global Health signal from §5.2.
+**Risk Classification (Local Risk, per transfer)**
 
-**Implementation status:** both rules are wired in — `engine.py` exposes `impact_minutes` (`TransferRisk`) and `p85_penalty_minutes` (`RouteSimulationResult`) alongside the existing simulation outputs, and `ui_components.py` consumes them for the transfer-strip and card-edge coloring. One refinement beyond the rules as originally specified here: any base-Red transfer — not just one downgraded by the Impact Override — renders its trailing figure as the fallback's absolute arrival clock time rather than the scheduled buffer, since a base-Red transfer's buffer is uninformative regardless of whether the override fires (`UIUX_SPEC.md` §1.3, §5 history #16–#19).
+| Constant | Value | Code location | Rationale |
+|---|---|---|---|
+| Risk band thresholds | Green <10% · Yellow 10–30% · Red >30% | `ui_components.RISK_LOW_MAX_PROBABILITY` / `RISK_MEDIUM_MAX_PROBABILITY` | Boundaries are exclusive at the low end, inclusive at the medium end (§5.3 step 3) |
+| MCT station tiers | Major hub: 10 min · Standard: 5 min | `gtfs_ingest.classify_station_mct` | 75th-percentile touch-count split (§3.6.1) |
+| MCT floor cap | 0.95 (`MCT_VIOLATION_MAX_FLOOR`) | `engine.py` | Never 1.0 — leaves room for a genuine cross-platform sprint (§3.6.2) |
+| Impact Override threshold | `impact_minutes` ≤ 15 min | `ui_components.py` | Separates costly misses from cheaply-recoverable ones (§3.4, §5.3 step 4) |
 
-## 6. Milestones Retrospective
+**Risk Classification (Global Health, per route)**
 
-### 6.1 Phase 1 — Mock-data prototype
+| Constant | Value | Code location | Rationale |
+|---|---|---|---|
+| P85 penalty bands | Green ≤30min · Yellow 30–60min · Red >60min | `ui_components.py` | Calibrated against ordinary single-leg delay variance, not a "zero risk ever looks risky" assumption (§5.2) |
 
-Built the mock JSON dataset (`mock_data.json`: stations, lines, legs, transfers, routes) conforming to §2, the simulation engine per §3, and the Streamlit views per §5. This is the baseline the Pydantic contract and Monte Carlo algorithm were designed against, and both have stayed algorithmically unchanged through Phases 2 and 3.
+**Route Search & Filtering**
 
-### 6.2 Phase 2 — Real GTFS.DE + piebro-delay pipeline
+| Constant | Value | Code location | Rationale |
+|---|---|---|---|
+| Sanity filter ratio | 2.5x fastest duration | `route_filters.apply_sanity_filter` | Tighter of two bounds (§3.7) |
+| Sanity filter flat ceiling | +150 min over fastest | `route_filters.apply_sanity_filter` | Closes the long-haul gap a pure ratio misses (§3.7) |
+| Derived-transfer window | 2–60 minutes | `gtfs_ingest.derive_transfers` / `derive_transfer_templates` | Applied once at ingestion; route search consumes the resulting transfers and re-filters nothing (`DATA_SPEC.md` §9.4) |
+| Display pagination step | 5 routes | `app.py DISPLAY_LIMIT_STEP` | §5.1 |
 
-Replaced the hand-authored mock timetable with a real data pipeline: GTFS.DE static feed ingestion, historical delay bucketing from the piebro archive, an ID crosswalk expanding the corridor to a 33-station "Golden 35" network, and on-demand candidate-route search extended to 2 transfers. Output: `data/real_dataset.json` (§4.2), one Pydantic-validated snapshot per build, scoped to a single fixed calendar date. Full detail: `DATA_SPEC.md` §3–§5, §7–§9.
+**Data Pipeline** (full detail: `DATA_SPEC.md`)
 
-### 6.3 Phase 3 — DuckDB warehouse & dynamic calendar dates
+| Constant | Value | Code location | Rationale |
+|---|---|---|---|
+| Min. historical samples | 30 | `delay_aggregation.DEFAULT_MIN_SAMPLES` | Below this, fall back to train-type-level aggregate (`DATA_SPEC.md` §9.2) |
+| Delay bucket scheme | 0, 5, 15, 30, 60 min | `delay_aggregation.bucket_delay` | Matches `engine.py`'s bucket interpretation (`DATA_SPEC.md` §4) |
+| Corridor size | 33 stations ("Golden 35") | `pipelines/id_crosswalk.py` | `DATA_SPEC.md` §9.1 |
 
-Migrated the storage backend to a DuckDB warehouse of date-agnostic templates plus GTFS calendar data (§4.3), so route search and simulation can be scoped to **any date in the ingested calendar window** at query time instead of one date baked in at build time — while keeping the Monte Carlo hot loop and O(1) fallback-plan cache (§3.4–§3.5) untouched. Added the UI date picker (§5.1), a third selectable data source, and `requirements.txt` for reproducible installs. Confirmed against the real corridor: a full month (2026-08-22 .. 2026-09-21) ingests into a 9MB warehouse file, and different dates genuinely surface different route topologies (e.g. a Saturday-only direct Frankfurt–Köln service that doesn't exist on weekdays). Full detail: `DATA_SPEC.md` §6.
+## 7. Development History & Phases
 
-### 6.4 Post-Phase-3 hardening — corridor connectivity & query performance
+| Phase | Shipped | Backend (§4.2) | Dataset |
+|---|---|---|---|
+| 1 — Mock prototype | Pydantic contract, MC engine, Streamlit UI | Mock | `mock_data.json`, hand-authored |
+| 2 — Real pipeline | GTFS.DE + piebro ingestion, 33-station corridor, 2-transfer search | Snapshot | `data/real_dataset.json`, one fixed date |
+| 3 — DuckDB warehouse | Date-agnostic templates + dynamic calendar resolution | Warehouse | `data/warehouse.duckdb`, full month window |
+| 3.1 — Corridor & query hardening | Corridor-aware leg fix, N+1 query fix, cache/pagination split | Varies per fix (below) | Same warehouse (+ Snapshot's `real_dataset.json`, rebuilt) |
+| 3.2 — MCT & platform capture | Station-tier MCT + gradient floor, platform capture | All three | Engine + UI wording addition |
 
-Real-feed testing against the Phase 3 warehouse surfaced a data-completeness bug and, once fixed, the performance issues it had been masking. Three fixes landed together:
+**Phase 1.** Built the mock dataset, engine, and UI together — the baseline the Pydantic contract and MC algorithm were designed against. Phases 2 and 3 swapped the storage layer beneath that contract without changing it; the only later engine change was Phase 3.2's MCT floor.
 
-- **Corridor-aware leg construction** (`DATA_SPEC.md` §3.2): fixed a bug where any trip with a non-corridor stop between two corridor hubs — near-universal on long-distance runs — silently lost that connection instead of being modeled with an extra stop. Recovered ~1,000 previously-disconnected long-distance trips from the real feed without expanding the 33-station corridor whitelist (`DATA_SPEC.md` §9.1).
-- **N+1 query fix** (`DATA_SPEC.md` §6.3.1, §3.5 above): the richer graph the leg fix produced exposed a latent per-leg/per-line query pattern in `route_search_duckdb.find_candidate_routes`; batching to one query per hop cut a single search from 584 DuckDB round trips to 7, plus a matching index-reuse fix for the JSON backend (§3.5).
-- **Caching/pagination split** (§4.4, §5.1): replaced a single combined search+simulate cache keyed on the pagination window with separate route-search and per-route simulation caches, so "Load more" only ever pays for newly-revealed routes instead of re-simulating everything already loaded.
+**Phase 2.** Replaced the mock timetable with real GTFS.DE ingestion + piebro historical delay bucketing, an ID crosswalk expanding to the 33-station corridor, and search extended to 2 transfers. Output: one Pydantic-validated snapshot per build.
 
-Combined effect, measured against the real corridor: a Leipzig→Munich search that previously surfaced nothing before 09:27 now finds a 07:26 departure, and a full search + 5-route simulate went from ~30s to ~2.15s.
+**Phase 3.** Migrated storage to a DuckDB warehouse of date-agnostic templates + GTFS calendar data, so any date in the ingested window is queryable at query time instead of baked in at build time — MC hot loop and O(1) fallback cache untouched. Added the UI date picker and a third data source. A full month (2026-08-22 .. 2026-09-21) ingests into a single warehouse file; different dates genuinely surface different route topologies. (Its size grew to ~55MB in Phase 3.1 when the corridor-aware leg fix roughly doubled the leg count — see `DATA_SPEC.md` §6.1.)
 
-### 6.5 Minimum Connection Time (MCT) & platform info
+**Phase 3.1 — Corridor & query hardening.** Real-feed testing surfaced a data-completeness bug and, once fixed, the performance issue it had been masking:
 
-A data audit against the real, downloaded GTFS.DE feeds (`gtfs_fv_latest.zip`, `gtfs_rv_latest.zip`) found: (a) no `transfers.txt`/`min_transfer_time` in either feed, and (b) a genuine `platform_code` column in `stops.txt`, but with close to 0% coverage at this corridor's 33 major-hub stations specifically (only Halle(Saale)Hbf had any). Both findings shaped what shipped:
+- **Corridor-aware leg construction** *(Snapshot + Warehouse — both GTFS-ingestion build paths; Mock is hand-authored and untouched)*: any trip with a non-corridor stop between two corridor hubs was silently dropped instead of modeled with an extra stop — recovered ~1,000 previously-disconnected long-distance trips.
+- **N+1 query fix** *(Warehouse: DuckDB query batching; Mock + Snapshot: a parallel index-reuse fix in the JSON search path, §3.5)*: the richer graph exposed a per-leg/per-line query pattern; batching cut one Warehouse search from 584 DuckDB round trips to 7.
+- **Caching/pagination split** *(all three backends — generic in `app.py`, §4.3)*: "Load more" now only pays for newly-revealed routes.
 
-- **MCT**: a station-tier classifier (§3.6.1) plus a gradient risk floor (§3.6.2), enforced inside `simulate_route`'s own Monte Carlo loop (§3.6.3) rather than as a display-time patch, and a distinct "Unrealistic transfer" UI wording (§3.6.4, `UIUX_SPEC.md` §1.4) for the case a fallback can't rescue.
-- **Platform info**: `Leg.origin_platform`/`destination_platform` (§2.3), ingested from `stop_times.txt`'s platform-level `stop_id` wherever `platform_code` is populated. Given the near-0% real coverage at major hubs, the UI renders a platform pair only when both a transfer's arriving and departing leg have one, hiding gracefully rather than showing a placeholder for data that mostly doesn't exist.
+Combined: a Leipzig→Munich search that found nothing before 09:27 now finds 07:26; a full search + 5-route simulate went from ~30s to ~2.15s.
 
-### 6.6 What's next
+**Phase 3.2 — MCT & platform capture.** A data audit against the real GTFS.DE feeds found no `transfers.txt`/`min_transfer_time` (motivating §3.6's station-tier proxy + gradient floor) and a genuine but sparse `platform_code` column (motivating §2.3's platform fields, hidden gracefully when absent).
 
-See §7 for the current Phase 4+ candidate list.
+## 8. Limitations & Future Work
 
-## 7. Future Roadmap & Extensions (Phase 4+)
+### 8.1 Known Engine Limitations
 
-Carried forward from the original design consensus, plus candidates identified once Phase 3 was in production:
+- **Independent per-leg delay sampling** — no same-train carryover or shared "bad day" correlation between legs.
+- **One level of re-routing on miss** (§3.4) — a miss *within* a fallback route resolves via headway wait, not a second search.
+- **2-transfer cap** (§6) — closes most real corridor pairs but isn't a hard architectural limit.
+- **MCT is a touch-count proxy**, not real platform geometry — data-side detail: `DATA_SPEC.md` §10.
 
-- **Correlated delay sampling** — same-physical-train carryover between legs, and/or regional "bad day" latent factors shared across legs on the same network.
-- **MCT proxy refinement & fallback-internal MCT** — §3.6 shipped station-tier MCT and a gradient risk floor for the primary route's own transfers (§6.5). Two things remain open: the touch-count classifier (§3.6.1) is a proxy for interchange complexity, not real platform geometry, and would be worth replacing with an actual platform-to-platform distance matrix if such data ever becomes available; and MCT enforcement today only covers the primary route's own transfers (§3.6) and a fallback candidate's *entry* connection (§3.4, still a hard veto there, deliberately not the gradient, since rejecting a discardable candidate route is a different decision than scoring a transfer that must be displayed) — a transfer *within* a fallback route's own path is not MCT-checked at all.
-- **Unbounded recursive re-routing** — §3.4 covers exactly one re-routing search per missed transfer; a miss *within* a fallback route still resolves via the same-line-headway wait rather than searching again.
-- **Advanced simulation controls** in the UI — exposing iteration count, risk-aversion weighting, or minimum acceptable buffer to the user.
-- **Full distribution histogram output** per route, instead of just mean + percentile band.
-- **Multi-day/multi-date batch simulation** — comparing risk across several dates in one view, now that Phase 3 makes any single date queryable.
-- **Live/real-time GTFS-RT integration** — `DATA_SPEC.md`'s offline-only decision (§1) stands for now; this would revisit it.
-- **RAPTOR- or CSA-style routing** to replace the current 2-transfer, precomputed-transfer-template search (`DATA_SPEC.md` §5). The transfer-template approach is quadratic-ish in arrivals × departures per station and already produces ~53k transfer templates from ~4k legs on the Golden 35 corridor (`DATA_SPEC.md` §10) — a bigger corridor or a higher transfer cap needs a real time-expanded or round-based algorithm instead of enumerating transfer pairs up front.
-- **Backend/frontend decoupling** — extract the simulation engine behind a FastAPI service, with a React/Vite PWA frontend replacing the current Streamlit UI (§5). Streamlit's per-rerun execution model is a good fit for prototyping and demoing, but a dedicated API + SPA frontend would be needed for real concurrent-user load, mobile installability, and decoupled deploys of the algorithm vs. the UI.
-- **Post-midnight cross-day service lookback** for the calendar query (§4.3) — a date's search currently only considers that date's own active services (`DATA_SPEC.md` §10).
+### 8.2 Future Roadmap (Phase 4+)
+
+- **Correlated delay sampling** — same-train carryover and/or regional "bad day" latent factors.
+- **MCT proxy refinement** — real platform-to-platform distance data if it ever becomes available; also extend MCT checking to transfers *within* a fallback route (currently unchecked).
+- **Unbounded recursive re-routing** — beyond §3.4's one level.
+- **Advanced simulation controls** in the UI — iteration count, risk-aversion weighting, minimum buffer.
+- **Full distribution histogram** output, not just mean + percentile.
+- **Multi-day/multi-date batch simulation**, comparing risk across dates in one view.
+- **Live/real-time GTFS-RT integration** — would revisit the offline-only decision (`DATA_SPEC.md` §1).
+- **RAPTOR/CSA-style routing** to replace the transfer-template search, which is quadratic-ish in arrivals × departures per station (`DATA_SPEC.md` §10).
+- **Backend/frontend decoupling** — FastAPI service + React/Vite PWA, for real concurrent load and mobile installability.
+- **Post-midnight cross-day service lookback** — a date's search currently only considers that date's own active services (`DATA_SPEC.md` §10).

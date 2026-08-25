@@ -1,4 +1,4 @@
-"""Pydantic data models for DB Risk & Rescue, per SPEC.md Section 2."""
+"""Pydantic data models for DB Risk & Rescue, per SPEC.md §2."""
 
 from datetime import datetime
 
@@ -10,7 +10,7 @@ class Station(BaseModel):
 
     station_id: str
     name: str
-    # SPEC.md §7's proposed MCT extension, now promoted (no per-station
+    # SPEC.md §3.6.1's station-tier MCT classification (no per-station
     # min_transfer_time exists in either real GTFS.DE feed -- see
     # pipelines/gtfs_ingest.py's classify_station_mct). Defaults to the
     # standard-station value so pre-existing fixtures (mock_data.json) that

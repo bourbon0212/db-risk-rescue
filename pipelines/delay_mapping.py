@@ -2,41 +2,13 @@
 line_id/line_type, so delay_aggregation.py's existing bucketing/fallback
 logic (completely unchanged) can run against real historical delay records.
 
-Schema notes (confirmed against the downloaded data/raw/delays_*.parquet,
-14M rows, not guessed from the Hugging Face dataset-card preview):
+The archive's columns don't mean what their names suggest -- `delay_in_min`
+isn't arrival delay, and line identity lives in a different column for
+long-distance vs. regional trains. DATA_SPEC.md §4.1 has the measurements
+behind both; the mapping tables below implement them.
 
-- `delay_in_min` is NOT reliably "arrival delay at this station" -- for rows
-  with a real arrival event it only matches (arrival_change_time -
-  arrival_planned_time) about 58% of the time; it looks departure-delay-
-  biased (matches departure delay ~93% of the time, 100% for origin-station
-  rows with no arrival event at all). DATA_SPEC.md §4 step 2 wants arrival
-  delay at the destination station specifically, so this module computes it
-  directly from arrival_planned_time/arrival_change_time instead of trusting
-  delay_in_min, and drops rows with no arrival event (the train's own
-  origin station) or a canceled arrival.
-
-- train_type values are close to our five LINE_TYPES but not identical
-  ("S" not "S-Bahn"; "EC"/"ECE" fold into "IC", same as gtfs_ingest.py's
-  own normalization) -- see PIEBRO_TRAIN_TYPE_TO_LINE_TYPE.
-
-- For ICE/IC/EC/ECE, line_number is always null; train_number is a real,
-  nationally-unique line number (e.g. train_type="ICE", train_number="615"
-  -> matches GTFS route_short_name "ICE 615"). For RE/RB/S, train_number is
-  an internal per-run id that does NOT match GTFS's short_name -- the real
-  line identity is in line_number, already type-prefixed in ~91-99.8% of
-  rows ("RE5", "RB44", "S12"); the rest are bare digits ("14" for an S-Bahn
-  row) or a different brand's code entirely (regional brands like "MEX12",
-  "FEX", "RS7" that our GTFS scoping already excludes for the same reason:
-  they don't follow the ICE/IC/RE/RB/S<digit> convention).
-
-KNOWN LIMITATION: regional line_number codes ("RE5", "RB44", ...) are not
-guaranteed nationally unique the way ICE/IC train numbers are -- two
-different, unrelated regional lines in different parts of Germany could
-share a short code. This module (like gtfs_ingest.py's own line_id, which
-has the same root cause) doesn't disambiguate that; it's a real, open
-limitation, not something silently hidden. Filtering to only the line_ids
-your real GTFS build actually needs (via target_line_ids) bounds the blast
-radius but doesn't eliminate it.
+Regional codes aren't nationally unique, so `target_line_ids` bounds (but
+doesn't eliminate) the collision risk -- DATA_SPEC.md §10.
 """
 
 from pathlib import Path

@@ -1,7 +1,7 @@
-"""Phase 3 DuckDB-backed sibling of pipelines/route_search.py (SPEC.md §4.3).
+"""Warehouse-backed sibling of pipelines/route_search.py (DATA_SPEC.md §5, §6).
 
 Same candidate-route algorithm and Route/Leg/Transfer contract as the
-Phase 1/2 in-memory find_candidate_routes() -- direct, single-transfer, and
+Mock/Snapshot in-memory find_candidate_routes() -- direct, single-transfer, and
 two-transfer journeys, sorted by scheduled_departure -- but every step's
 candidate set comes from a small, origin/date-scoped DuckDB query against
 the warehouse's date-agnostic leg_templates/transfer_templates instead of
@@ -149,7 +149,7 @@ def find_candidate_routes(
 
     legs_by_id/transfers_by_id are mutated in place with every Leg/Transfer
     object this call resolves, so engine.py can look any of them up by id
-    afterward exactly as it does for the Phase 1/2 in-memory dataset.
+    afterward exactly as it does for the Mock/Snapshot in-memory dataset.
 
     Each hop's transfer candidates -- and each hop's delay_distributions
     lookups (`_DistributionCache.preload`) -- are fetched with ONE batched

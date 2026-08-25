@@ -7,27 +7,14 @@ schedule (DATA_SPEC.md suggests re-running the GTFS download roughly every
 Fahrplanwechsel, i.e. quarterly; the delay archive whenever a new month is
 published).
 
-WHY TWO GTFS FEEDS, NOT THE ONE "COMPLETE" FEED:
-gtfs.de (https://gtfs.de/de/feeds/) publishes several German national GTFS
-feeds. The "Deutschland gesamt" / "de_full" feed includes every bus, tram,
-and ferry in the country -- far more than DATA_SPEC.md §3 step 2 wants us to
-even parse. We instead pull just the two feeds that together cover this
-app's exact LINE_TYPES (ICE, IC, RE, RB, S-Bahn):
-  - fv_free  ("Schienenfernverkehr Deutschland"): ICE, IC, EC, long-distance
-  - rv_free  ("Schienenregionalverkehr Deutschland"): RE, RB, S-Bahn
-Both URLs below were verified live (HTTP 200) against gtfs.de on 2026-08-23.
-If either 404s later, re-check https://gtfs.de/de/feeds/ -- the site links
-each feed through an intermediate page (de_fv / de_rv) to its current
-"latest.zip".
+Why two rail feeds rather than gtfs.de's "complete" national one:
+DATA_SPEC.md §3 step 1.
 
-WHY data-2026-07.parquet:
-piebro/deutsche-bahn-data (https://huggingface.co/datasets/piebro/deutsche-bahn-data)
-publishes one Parquet file per calendar month under monthly_processed_data/,
-named data-YYYY-MM.parquet. 2026-07 was the most recently completed month
-as of 2026-08-23 (2026-08 was still in progress). No Hugging Face token is
-needed -- the dataset and its resolve/ URLs are public. Pass --months to
-pull additional or newer months once they're published; check the file
-listing at the URL above for what's currently available.
+IF A DOWNLOAD 404s: re-check https://gtfs.de/de/feeds/ -- the site links each
+feed through an intermediate page (de_fv / de_rv) to its current latest.zip,
+so the direct URLs below can move. For the delay archive, browse
+https://huggingface.co/datasets/piebro/deutsche-bahn-data to see which
+months exist, then pass --months (DEFAULT_MONTHS only tracks one).
 
 HOW TO RUN (see the very bottom of this file too):
     pip install requests tqdm      # tqdm isn't in this project's venv yet

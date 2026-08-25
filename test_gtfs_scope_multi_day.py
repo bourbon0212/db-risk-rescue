@@ -1,8 +1,8 @@
-"""Tests for pipelines/gtfs_scope.py's scope_gtfs_feed_multi_day (SPEC.md
-§4.3): same DB-agency/normalizable-type/corridor-touching filtering as
-scope_gtfs_feed, but with no service_date -- every service_id's trips
-survive, and calendar.txt/calendar_dates.txt are copied through so Phase 3's
-warehouse build can resolve active services per query date instead of one
+"""Tests for pipelines/gtfs_scope.py's scope_gtfs_feed_multi_day
+(DATA_SPEC.md §3 step 2): same DB-agency/normalizable-type/corridor-touching
+filtering as scope_gtfs_feed, but with no service_date -- every service_id's
+trips survive, and calendar.txt/calendar_dates.txt are copied through so the
+Warehouse build can resolve active services per query date instead of one
 date baked in at build time. Uses the same fixtures/gtfs_national_sample/
 fixture as test_gtfs_scope.py.
 """

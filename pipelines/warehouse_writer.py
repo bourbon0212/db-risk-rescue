@@ -1,6 +1,6 @@
-"""DDL + write logic for the Phase 3 DuckDB warehouse (SPEC.md §4.3).
+"""DDL + write logic for the Warehouse backend (DATA_SPEC.md §6).
 
-Table shapes mirror the schema agreed in the Phase 3 design plan: topology
+Table shapes mirror DATA_SPEC.md §6.2's schema: topology
 is stored date-agnostic (leg_templates/transfer_templates, seconds-since-
 midnight instead of concrete datetimes) so the row count doesn't multiply
 with the size of the ingested calendar window; delay_distributions stays
@@ -133,7 +133,7 @@ def write_warehouse(
     calendar_exceptions: list[ServiceCalendarException],
     delay_distributions: dict[str, dict[str, float]],
 ) -> None:
-    """Write an already-parsed/crosswalked set of Phase 3 warehouse rows.
+    """Write an already-parsed/crosswalked set of Warehouse rows.
     Clears existing rows first, so this function is safe to re-run against
     the same warehouse file on a rebuild."""
     clear_warehouse(conn)

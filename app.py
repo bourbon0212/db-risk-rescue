@@ -1,4 +1,5 @@
-"""DB Risk & Rescue — Streamlit dashboard (SPEC.md Section 4)."""
+"""DB Risk & Rescue — Streamlit dashboard: backend selection and caching
+(SPEC.md §4), search/pagination flow and rendering (SPEC.md §5)."""
 
 import random
 import time
@@ -28,7 +29,9 @@ from ui_components import (
 N_ITERATIONS = 1000
 RNG_SEED = 42  # fixed seed keeps ETAs stable across Streamlit reruns
 
-SORT_FASTEST = "Fastest scheduled"
+# Both sorts rank by arrival time (SPEC.md §5.2), differing only in which
+# arrival they trust -- scheduled vs. risk-adjusted. Neither sorts on duration.
+SORT_EARLIEST = "Earliest scheduled"
 SORT_SAFEST = "Safest arrival"
 
 st.set_page_config(page_title="DB Risk & Rescue", page_icon=":material/train:", layout="wide")
@@ -116,19 +119,14 @@ def simulate_one_route(
     _search_indexes: tuple[dict[str, Leg], dict[str, list[Transfer]]],
     _stations_by_id: dict[str, Station],
 ) -> RouteSimulationResult:
-    """Cached per route_id (+ dataset path/n_iterations/seed), not per
-    display_limit batch -- a "Load more" click that reveals routes 6-10 only
-    ever simulates those 5; routes 1-5 are cache hits, not re-simulated
-    alongside them. route_id already uniquely and deterministically
-    identifies a physical route within `path`'s dataset, so it alone (plus
-    the run parameters) is a sufficient, stable cache key -- `_route` is
-    passed only to avoid recomputing it, not for cache identity (leading
-    underscore = excluded from Streamlit's cache-key hash, see
-    https://docs.streamlit.io/develop/concepts/architecture/caching).
-    `_search_indexes` (a get_search_indexes(path) result) is likewise
-    excluded from the key -- it's wholly determined by `path`, already part
-    of the key -- and is passed through to precompute_fallback_plans so its
-    fallback search reuses it instead of rebuilding it (SPEC.md §3.5)."""
+    """Simulation for exactly one route, cached per route_id rather than per
+    display_limit batch so "Load more" only pays for newly-revealed routes
+    (SPEC.md §4.3).
+
+    Underscore-prefixed args are excluded from Streamlit's cache key: each is
+    either derived from `path` (already in the key) or a convenience handle,
+    never part of cache identity. `_search_indexes` is passed through to
+    precompute_fallback_plans so fallback searches reuse it (SPEC.md §3.5)."""
     dataset = get_dataset(path)
     legs_by_id, transfers_by_id, lines_by_id = index_dataset(dataset)
     fallback_plans = precompute_fallback_plans(
@@ -150,7 +148,7 @@ def search_routes_warehouse(
     departure_time: datetime,
     service_date: date,
 ) -> tuple[list[Route], dict[str, Leg], dict[str, Transfer]]:
-    """SPEC.md §4.3 — Phase 3 counterpart to search_routes(). legs_by_id/
+    """DATA_SPEC.md §6.3 — Warehouse counterpart to search_routes(). legs_by_id/
     transfers_by_id start empty and are grown in place by find_candidate_routes
     (SPEC.md §3.5) -- returned so simulate_one_route_warehouse can resolve
     each route's own legs/transfers without a whole-dataset load. Cached
@@ -166,7 +164,7 @@ def search_routes_warehouse(
 
 @st.cache_data(show_spinner=False)
 def get_lines_warehouse(_conn: duckdb.DuckDBPyConnection) -> dict[str, Line]:
-    # lines table is small/static (SPEC.md §4.3) -- eager-loading all of it
+    # lines table is small/static (DATA_SPEC.md §6.2) -- eager-loading all of it
     # needs no per-search scoping, unlike legs/transfers.
     return {
         row[0]: Line(line_id=row[0], type=row[1], operator=row[2])
@@ -230,7 +228,7 @@ def _load_more_routes() -> None:
 
 render_header_banner(N_ITERATIONS)
 
-# --- §4.1 Input flow ---------------------------------------------------------
+# --- SPEC.md §5.1 Input flow --------------------------------------------------
 if use_warehouse:
     conn = get_warehouse_connection()
     stations_by_id = {
@@ -252,7 +250,7 @@ if use_warehouse:
     origin_id, destination_id, service_date, departure_time_of_day, sort_choice = render_search_card(
         station_ids, stations_by_id, default_origin_id, default_destination_id,
         default_departure_time=datetime.min.time(),
-        sort_options=(SORT_FASTEST, SORT_SAFEST),
+        sort_options=(SORT_EARLIEST, SORT_SAFEST),
         calendar_range=(calendar_min, calendar_max),
         default_date=calendar_min,
     )
@@ -306,7 +304,7 @@ else:
     origin_id, destination_id, _service_date, departure_time_of_day, sort_choice = render_search_card(
         station_ids, stations_by_id, default_origin_id, default_destination_id,
         default_departure_time=earliest_leg.scheduled_departure.time(),
-        sort_options=(SORT_FASTEST, SORT_SAFEST),
+        sort_options=(SORT_EARLIEST, SORT_SAFEST),
     )
     departure_datetime = datetime.combine(
         earliest_leg.scheduled_departure.date(), departure_time_of_day
@@ -347,12 +345,12 @@ if not candidate_routes:
     )
     st.stop()
 
-# --- §4.2 Route comparison view ----------------------------------------------
+# --- SPEC.md §5.2 Route comparison view -----------------------------------
 # candidate_routes only ever holds the loaded (display_limit-sliced) routes --
-# sorting, "Fastest scheduled" or "Safest arrival", ranks within what's
+# sorting, "Earliest scheduled" or "Safest arrival", ranks within what's
 # loaded, not the full candidate pool. Simulating every unloaded route just
 # to rank it correctly would defeat the point of pagination.
-if sort_choice == SORT_FASTEST:
+if sort_choice == SORT_EARLIEST:
     candidate_routes = sorted(candidate_routes, key=lambda r: r.scheduled_arrival)
 else:
     candidate_routes = sorted(

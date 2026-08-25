@@ -127,7 +127,7 @@
 </head>
 <body>
 
-<h1>Route card redesign — v7</h1>
+<h1>Route card redesign</h1>
 <p class="subtitle">DB-style "Plan your trip" search card · condensed, punchier risk wording</p>
 
 <div class="section">
@@ -162,8 +162,8 @@
       <div class="field">
         <label>Sort by</label>
         <div class="sort-group">
-          <div class="sort-option active">Fastest scheduled</div>
-          <div class="sort-option">Safest (lowest risk)</div>
+          <div class="sort-option active">Earliest scheduled</div>
+          <div class="sort-option">Safest arrival</div>
         </div>
       </div>
     </div>
@@ -323,7 +323,7 @@
   <ul>
     <li><b>Risk wording:</b> <code>Safe connection (6% risk)</code> · <code>Tight connection (20% risk)</code> · <code>Miss likely (38% risk)</code> — each stands alone as one line next to the buffer time, no separate description clause.</li>
     <li><b>Search card:</b> the swap button is vertically aligned to the input boxes, not the field labels above them — its column sits in the grid at <code>align-items:end</code> so it lines up with the bottom edge of both fields regardless of label length.</li>
-    <li><b>Sort control:</b> shown here as a two-option segmented pill rather than a Streamlit radio's dots, matching the toggle-like controls in your DB reference screenshot, while still mapping onto the same "Fastest scheduled" / "Safest (lowest risk)" choice your backend already takes.</li>
+    <li><b>Sort control:</b> shown here as a two-option segmented pill rather than a Streamlit radio's dots, matching the toggle-like controls in your DB reference screenshot, while still mapping onto the same "Earliest scheduled" / "Safest arrival" choice your backend already takes.</li>
     <li>This is a static mock — the swap button, date box, and sort pill are visual only here. Say the word when you want these wired into <code>ui_components.py</code>/<code>app.py</code> and I'll implement them for real (session-state-backed swap, actual <code>st.date_input</code>/<code>st.time_input</code>/<code>st.radio</code> underneath).</li>
   </ul>
 </div>

@@ -1,5 +1,5 @@
-"""Tests for pipelines/gtfs_ingest.py's Phase 3 date-agnostic parsers
-(SPEC.md §4.3): parse_trips, parse_leg_templates, derive_transfer_templates,
+"""Tests for pipelines/gtfs_ingest.py's date-agnostic parsers
+(DATA_SPEC.md §3 steps 5-6): parse_trips, parse_leg_templates, derive_transfer_templates,
 and the _seconds_since_midnight/_anchor_datetime primitives they share with
 the existing anchored parse_legs/derive_transfers. Uses the same
 fixtures/gtfs_mini/ fixture as test_gtfs_ingest.py so results can be checked

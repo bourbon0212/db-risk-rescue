@@ -1,4 +1,4 @@
-"""Orchestrator for the Phase 3 DuckDB warehouse (SPEC.md §4.3): wires
+"""Orchestrator for the Warehouse backend (DATA_SPEC.md §6.4): wires
 gtfs_ingest's date-agnostic parsers + calendar_ingest + delay_aggregation +
 id_crosswalk into pipelines/warehouse_writer.py, producing
 data/warehouse.duckdb.
@@ -15,8 +15,8 @@ Mirrors pipelines/build_dataset.py's two-build-path structure:
     parse_legs.
 
 build_dataset.py, route_search.py, and data/real_dataset.json are untouched
-by this module -- Phase 1/2's JSON path keeps working unmodified alongside
-this one (SPEC.md §4.3).
+by this module -- the Mock/Snapshot JSON path keeps working unmodified
+alongside this one (SPEC.md §4.1).
 """
 
 import tempfile
@@ -166,7 +166,7 @@ def build_warehouse(
     historical_delays: pd.DataFrame,
     min_samples: int = DEFAULT_MIN_SAMPLES,
 ) -> None:
-    """Fixture/demo path: run the full Phase 3 pipeline against a small,
+    """Fixture/demo path: run the full Warehouse pipeline against a small,
     already-final-station-id GTFS fixture (no crosswalk needed) and write
     the result into conn. Mirrors build_dataset.build_dataset()'s scope."""
     stations = parse_stations(gtfs_dir)
