@@ -2,11 +2,11 @@
 
 **Companion to:** `SPEC.md` (product/algorithm spec) — this document covers how data gets from source files into `engine.py`'s Pydantic input contract (`SPEC.md` §2), across three generations of storage backend. `SPEC.md` §4 is the high-level architecture summary; this document is the full detail behind it.
 
-**Status:** Phase 2 (JSON pipeline, §3–§5, §7–§9) and Phase 3 (DuckDB warehouse, §6) are both implemented and remain selectable data sources in `app.py`.
+**Status:** Snapshot (JSON pipeline, §3–§5, §7–§9) and Warehouse (DuckDB warehouse, §6) are both implemented and remain selectable data sources in `app.py`.
 
 **Scope:** Offline-only. No live polling, no HAFAS or other reverse-engineered sources — a deliberate project decision carried unchanged from Phase 2 into Phase 3.
 
-**Section map:** §1 Guiding Constraints & Scope · §2 Repository & Component Layout · §3 GTFS Topology Ingestion Pipeline · §4 Delay Distribution Pipeline · §5 Route Search & Candidate Generation · §6 DuckDB Warehouse Schema (Phase 3) · §7 JSON Backends & Data Access Layer (Phase 1/2) · §8 Build & Deployment Sequence · §9 Resolved Design Decisions · §10 Known Limitations.
+**Section map:** §1 Guiding Constraints & Scope · §2 Repository & Component Layout · §3 GTFS Topology Ingestion Pipeline · §4 Delay Distribution Pipeline · §5 Route Search & Candidate Generation · §6 DuckDB Warehouse Schema (Warehouse) · §7 JSON Backends & Data Access Layer (Mock & Snapshot) · §8 Build & Deployment Sequence · §9 Resolved Design Decisions · §10 Known Limitations.
 
 This spec describes how `mock_data.json` (Phase 1) gets replaced by real, then dynamically-queryable, data — while leaving `models.py`, `engine.py`, `ui_components.py`, and `app.py`'s core rendering untouched. Every pipeline below produces output that validates against (or, for Phase 3, materializes into) the existing `MockDataset`/`Leg`/`Transfer`/`Route` Pydantic models — that contract is the hard boundary every section of this document is built around. `Station`/`Leg` gained two small, defaulted fields since this was first written (`Station.mct_minutes`, `Leg.origin_platform`/`destination_platform` — §3.3, `SPEC.md` §2.1/§2.3) — an addition to the contract, not a break of it: every existing pipeline output still validates unchanged, since both fields default when a producer doesn't set them.
 
@@ -40,16 +40,16 @@ pipelines/
                           # (every service_id, §6)
   route_search.py         # in-memory candidate Route generation over a loaded MockDataset (§5)
   route_search_duckdb.py  # DuckDB-backed candidate Route generation, dynamic-calendar-aware (§5, §6)
-  build_dataset.py        # Phase 2 orchestrator -> validated MockDataset -> data/real_dataset.json
-  build_warehouse.py      # Phase 3 orchestrator -> data/warehouse.duckdb (§6)
+  build_dataset.py        # Snapshot orchestrator -> validated MockDataset -> data/real_dataset.json
+  build_warehouse.py      # Warehouse orchestrator -> data/warehouse.duckdb (§6)
   warehouse_writer.py     # DuckDB DDL + write logic (§6)
   download_raw_data.py    # fetches GTFS.DE zip(s) + piebro monthly Parquet into data/raw/
 db.py                     # DuckDB connection helper — mirrors data_loader.py, for the warehouse backend (§7)
 data_loader.py            # loads mock_data.json / real_dataset.json into a validated MockDataset (§7)
 data/
   raw/                    # downloaded GTFS feed + piebro parquet snapshots (gitignored)
-  real_dataset.json       # Phase 2 pipeline output — mock_data.json is left untouched
-  warehouse.duckdb        # Phase 3 pipeline output (gitignored — rebuild with
+  real_dataset.json       # Snapshot pipeline output — mock_data.json is left untouched
+  warehouse.duckdb        # Warehouse pipeline output (gitignored — rebuild with
                           # `python -m pipelines.build_warehouse`)
 ```
 
@@ -126,7 +126,7 @@ Still explicitly **not** in scope: 3+ transfer journeys, full graph pathfinding/
 - `pipelines/route_search.py::find_candidate_routes(dataset, ...)` — in-memory, over an already-loaded `MockDataset`. Backs the §7 JSON data sources.
 - `pipelines/route_search_duckdb.py::find_candidate_routes(conn, ..., service_date, legs_by_id, transfers_by_id)` — each step is a small SQL query against the warehouse, scoped to origin station + the active `service_id`s for `service_date` (§6.3). Resolved `Leg`/`Transfer` objects are written into the caller-supplied dicts in place, so only whatever a given search actually touches (the top-level search, plus one fallback search per transfer node from `engine.py`'s `precompute_fallback_plans`) ever loads into memory — never the whole network. Backs the §6 DuckDB data source.
 
-## 6. DuckDB Warehouse Schema (Phase 3)
+## 6. DuckDB Warehouse Schema (Warehouse)
 
 ### 6.1 Design goal
 
@@ -173,7 +173,7 @@ This batching is load-bearing, not a micro-optimization: the corridor-aware leg 
 
 Both call `pipelines/warehouse_writer.write_warehouse()` to persist the result. `python -m pipelines.build_warehouse` runs whichever path has real GTFS zips present under `data/raw/`, prints row counts and the resolved calendar window on success.
 
-## 7. JSON Backends & Data Access Layer (Phase 1/2)
+## 7. JSON Backends & Data Access Layer (Mock & Snapshot)
 
 **Loading (`data_loader.py`), unchanged since Phase 2:**
 

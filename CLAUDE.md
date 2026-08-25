@@ -17,9 +17,9 @@ You are an expert Python Developer and Data Scientist implementing the DB Delay 
 
 - **Query-time contract**: `models.py`'s Pydantic models (Station/Line/Leg/Transfer/Route, `SPEC.md` §2) are the one interface `engine.py`'s Monte Carlo simulation and `ui_components.py`'s rendering consume. This hasn't changed since Phase 1 — only what produces those objects has.
 - **Three selectable data sources** in `app.py`'s sidebar, all still functional:
-  - Phase 1 — `mock_data.json`, hand-authored fixture data.
-  - Phase 2 — `data/real_dataset.json`, a GTFS.DE + piebro-delay pipeline output baked to one fixed calendar date.
-  - Phase 3 (current default direction) — `data/warehouse.duckdb`, a DuckDB warehouse of date-agnostic `leg_templates`/`transfer_templates` plus GTFS `service_calendar`, so route search can be scoped to any date in the ingested calendar window at query time (`DATA_SPEC.md` §9).
+  - Mock — `mock_data.json`, hand-authored fixture data.
+  - Snapshot — `data/real_dataset.json`, a GTFS.DE + piebro-delay pipeline output baked to one fixed calendar date.
+  - Warehouse (default) — `data/warehouse.duckdb`, a DuckDB warehouse of date-agnostic `leg_templates`/`transfer_templates` plus GTFS `service_calendar`, so route search can be scoped to any date in the ingested calendar window at query time (`DATA_SPEC.md` §9).
 - **Simulation engine**: `engine.py`'s Monte Carlo loop never touches a database — it consumes plain in-memory `Leg`/`Transfer` objects assembled once per search. Missed-connection re-routing (`precompute_fallback_plans`) is pre-computed once per transfer node before the simulation loop, giving each iteration an O(1) cache lookup on a miss instead of a fresh pathfinding search (`SPEC.md` §3.4).
 
 ## Core Directives

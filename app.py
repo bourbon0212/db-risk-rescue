@@ -35,17 +35,18 @@ st.set_page_config(page_title="DB Risk & Rescue", page_icon=":material/train:", 
 inject_global_styles()
 
 # DATA_SPEC.md §6, §7 / SPEC.md §4, §5.1 — sidebar toggle for A/B comparing
-# the Phase 1 mock timetable, the Phase 2 GTFS/JSON pipeline output, and the
-# Phase 3 DuckDB warehouse (dynamic calendar dates) during development.
-LABEL_MOCK = "Phase 1 — mock_data.json"
-LABEL_REAL = "Phase 2 — real_dataset.json (GTFS pipeline)"
-LABEL_WAREHOUSE = "Phase 3 — warehouse.duckdb (dynamic dates)"
-JSON_DATA_SOURCES = {LABEL_MOCK: MOCK_DATA_PATH, LABEL_REAL: REAL_DATA_PATH}
+# the small hand-authored Mock timetable, the single-date GTFS Snapshot
+# pipeline output, and the dynamic-date DuckDB Warehouse. Warehouse is the
+# default since it's the most complete dataset.
+LABEL_MOCK = "Mock"
+LABEL_SNAPSHOT = "Snapshot"
+LABEL_WAREHOUSE = "Warehouse"
+JSON_DATA_SOURCES = {LABEL_MOCK: MOCK_DATA_PATH, LABEL_SNAPSHOT: REAL_DATA_PATH}
 
 with st.sidebar:
     st.caption("Data source")
     data_source_label = st.radio(
-        "Data source", [LABEL_MOCK, LABEL_REAL, LABEL_WAREHOUSE], index=0,
+        "Data source", [LABEL_MOCK, LABEL_SNAPSHOT, LABEL_WAREHOUSE], index=2,
         label_visibility="collapsed",
     )
 
