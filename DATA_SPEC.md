@@ -24,13 +24,13 @@ Offline-only: fixture files and periodically-downloaded GTFS.DE/piebro archives 
 
 ```
 pipelines/
-  gtfs_ingest.py         # GTFS.DE static feed -> Station, Line, Leg/LegTemplate,
+  gtfs_ingest.py          # GTFS.DE static feed -> Station, Line, Leg/LegTemplate,
                           # Transfer/TransferTemplate, TripRecord, classify_station_mct(),
                           # platform_code capture (§3.3)
-  calendar_ingest.py     # calendar.txt / calendar_dates.txt -> ServiceCalendarRow/Exception (§6)
-  delay_aggregation.py   # piebro-shaped records -> delay_distribution_minutes per Leg (§4)
-  delay_mapping.py       # piebro raw schema -> delay_aggregation.py's expected shape
-  id_crosswalk.py        # GTFS stop_id <-> station_id mapping for the scoped corridor
+  calendar_ingest.py      # calendar.txt / calendar_dates.txt -> ServiceCalendarRow/Exception (§6)
+  delay_aggregation.py    # piebro-shaped records -> delay_distribution_minutes per Leg (§4)
+  delay_mapping.py        # piebro raw schema -> delay_aggregation.py's expected shape
+  id_crosswalk.py         # GTFS stop_id <-> station_id mapping for the scoped corridor
   gtfs_scope.py           # DB-agency/corridor/line-type feed scoping — scope_gtfs_feed()
                           # (single service_date, §7) and scope_gtfs_feed_multi_day() (§6)
   route_search.py         # in-memory candidate Route generation over a loaded MockDataset (§5)

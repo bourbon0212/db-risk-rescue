@@ -231,13 +231,13 @@ The three names are *runtime* labels — what you pick in the sidebar. They line
 
 | Backend | Built in | Storage | Dates it can answer for | Detail |
 |---|---|---|---|---|
-| **Mock** | Phase 1 | `mock_data.json`, loaded whole | Whatever the fixture hardcodes | `DATA_SPEC.md` §7 |
+| **Mock** | Phase 1 | `data/mock_data.json`, loaded whole | Whatever the fixture hardcodes | `DATA_SPEC.md` §7 |
 | **Snapshot** | Phase 2 | `data/real_dataset.json`, loaded whole | One, fixed at build time | `DATA_SPEC.md` §7 |
 | **Warehouse** *(default)* | Phase 3 | `data/warehouse.duckdb`, queried per search | Any date in the ingested window | `DATA_SPEC.md` §6 |
 
 Reading the table top to bottom is also the project's arc: a hand-authored fixture, then real data pinned to one day, then real data queryable by date.
 
-**Missing-data degradation.** Only `mock_data.json` is committed; both real datasets are gitignored build outputs. If the selected backend's file is absent, `app.py` shows a sidebar warning naming the build command and falls back to Mock rather than erroring. This matters on a fresh clone or deploy: without running `python -m pipelines.build_warehouse`, the app boots and works, but on fixture data — check the sidebar warning before reading anything into the results.
+**Missing-data degradation.** `data/mock_data.json` and `data/real_dataset.json` are both committed, so Mock and Snapshot work on a fresh clone; only `data/warehouse.duckdb` is a gitignored build output. If the selected backend's file is absent, `app.py` shows a sidebar warning naming the build command and falls back to Mock rather than erroring. This matters on a fresh clone or deploy: Warehouse is the default selection, so without running `python -m pipelines.build_warehouse` the app boots and works, but on the 11-station fixture — check the sidebar warning before reading anything into the results.
 
 ### 4.3 Streamlit Caching Strategy
 

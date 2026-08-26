@@ -20,9 +20,34 @@ __pycache__/
 data/raw/
 *.parquet
 *.zip
+# ...but never silently drop a committed fixture. The archive globs above are
+# unanchored on purpose (they catch a stray download anywhere), which would
+# otherwise swallow a zipped GTFS feed added under data/fixtures/ -- exactly
+# the shape this project's fixtures take -- with no error to notice.
+!data/fixtures/**/*.zip
+!data/fixtures/**/*.parquet
 
 # Phase 3 DuckDB warehouse (pipelines/build_warehouse.py) -- regenerable
 # build output, like data/raw/ above. Unlike real_dataset.json, this one IS
 # excluded: it's a binary database file (not a diffable JSON snapshot) that
 # would just bloat the repo on every rebuild.
 *.duckdb
+
+# OS, editor, and IDE droppings. None are present today -- these are
+# preventive. desktop.ini is the notable one: this repo lives inside a
+# OneDrive-synced folder, which writes them into directories on its own.
+desktop.ini
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Scratch output. db_env/ is this project's venv (see README Quickstart);
+# these cover the other names a contributor's tooling might pick.
+.venv/
+venv/
+env/
+*.log
+*.tmp
