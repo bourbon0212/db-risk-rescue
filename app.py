@@ -58,7 +58,7 @@ use_warehouse = data_source_label == LABEL_WAREHOUSE
 if use_warehouse and not db.WAREHOUSE_PATH.exists():
     st.sidebar.warning(
         "data/warehouse.duckdb not found — run `python -m pipelines.build_warehouse` "
-        "first. Falling back to mock_data.json for now."
+        "first. Falling back to data/mock_data.json for now."
     )
     use_warehouse = False
     data_source_label = LABEL_MOCK
@@ -68,7 +68,7 @@ if not use_warehouse:
     if data_source_path == REAL_DATA_PATH and not REAL_DATA_PATH.exists():
         st.sidebar.warning(
             "data/real_dataset.json not found — run `python -m pipelines.build_dataset` "
-            "first. Falling back to mock_data.json for now."
+            "first. Falling back to data/mock_data.json for now."
         )
         data_source_path = MOCK_DATA_PATH
 

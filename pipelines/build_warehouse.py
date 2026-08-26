@@ -47,7 +47,7 @@ from pipelines.gtfs_scope import scope_gtfs_feed_multi_day
 from pipelines.id_crosswalk import GTFS_STOP_ID_TO_STATION_ID, STATION_NAMES, to_station_id
 from pipelines.warehouse_writer import write_warehouse
 
-DEMO_GTFS_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_smoke"
+DEMO_GTFS_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_smoke"
 RAW_DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
 REAL_GTFS_ZIPS = {
     "fv": RAW_DATA_DIR / "gtfs_fv_latest.zip",
@@ -77,7 +77,7 @@ def _rows(line_id: str, line_type: str, delay_minutes: float, count: int) -> lis
 def demo_historical_delays() -> pd.DataFrame:
     """Same shape as build_dataset.demo_historical_delays() -- exercises
     both the well-sampled and fallback-pooling paths for every line in
-    fixtures/gtfs_smoke/."""
+    data/fixtures/gtfs_smoke/."""
     rows: list[dict] = []
     rows += _rows("ICE 15", "ICE", 0, 25) + _rows("ICE 15", "ICE", 15, 10)
     rows += _rows("IC 61", "IC", 5, 4)

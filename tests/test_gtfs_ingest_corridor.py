@@ -5,7 +5,7 @@ pair, so any trip with a non-corridor stop physically between two corridor
 hubs produced legs where *neither* endpoint was a corridor station -- and the
 old "keep only corridor-to-corridor legs" post-hoc filter then dropped all of
 them, silently disconnecting the hubs instead of just modeling the extra
-stop. fixtures/gtfs_corridor_gap/ has exactly that shape: trip T_GAP runs
+stop. data/fixtures/gtfs_corridor_gap/ has exactly that shape: trip T_GAP runs
 A -> B -> C, where B is deliberately not a corridor station.
 """
 
@@ -19,7 +19,7 @@ from pipelines.gtfs_ingest import (
     parse_leg_templates,
 )
 
-FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_corridor_gap"
+FIXTURE_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_corridor_gap"
 SERVICE_DATE = date(2026, 8, 29)
 CORRIDOR_STOP_IDS = {"DE_A", "DE_C"}  # DE_B is deliberately excluded
 

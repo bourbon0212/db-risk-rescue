@@ -42,11 +42,13 @@ pipelines/
   download_raw_data.py    # fetches GTFS.DE zip(s) + piebro monthly Parquet into data/raw/
 db.py                     # DuckDB connection helper, mirrors data_loader.py (§7)
 data_loader.py            # loads mock_data.json / real_dataset.json into MockDataset (§7)
-data/
-  raw/                    # downloaded GTFS + piebro snapshots (gitignored)
-  real_dataset.json       # Snapshot pipeline output
+data/                     # every dataset lives here -- nothing data-shaped at the root
+  mock_data.json          # Mock backend, hand-authored (committed)
+  real_dataset.json       # Snapshot pipeline output (committed)
   warehouse.duckdb        # Warehouse pipeline output (gitignored; rebuild via
                           # `python -m pipelines.build_warehouse`)
+  fixtures/               # small hand-built GTFS feeds (demo pipeline + tests)
+  raw/                    # downloaded GTFS + piebro snapshots (gitignored)
 ```
 
 ## 3. GTFS Topology Ingestion Pipeline
@@ -170,7 +172,7 @@ Load-bearing, not a micro-optimization: the corridor-aware leg fix (§3.2) grew 
 
 `build_warehouse.py` mirrors `build_dataset.py`'s two-path structure:
 
-- `build_warehouse(conn, gtfs_dir, historical_delays)` — fixture/demo path, `fixtures/gtfs_smoke/`.
+- `build_warehouse(conn, gtfs_dir, historical_delays)` — fixture/demo path, `data/fixtures/gtfs_smoke/`.
 - `build_real_warehouse(conn, raw_dir)` — real path: `scope_gtfs_feed_multi_day()` (every calendar day survives), date-agnostic parsers (§3 steps 5–6), cross-feed dedup, corridor-to-corridor filter, crosswalk, delay distributions from real piebro data (synthetic per-type fallback otherwise).
 
 Both call `warehouse_writer.write_warehouse()`. `python -m pipelines.build_warehouse` runs whichever path has real GTFS zips under `data/raw/`, prints row counts and the resolved calendar window.
@@ -180,7 +182,7 @@ Both call `warehouse_writer.write_warehouse()`. `python -m pipelines.build_wareh
 **Loading (`data_loader.py`):**
 
 ```python
-MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
+MOCK_DATA_PATH = Path(__file__).parent / "data" / "mock_data.json"
 REAL_DATA_PATH = Path(__file__).parent / "data" / "real_dataset.json"
 
 def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:
@@ -197,7 +199,7 @@ def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:
 
 **Phase 2** (still the build path for `data/real_dataset.json`):
 
-1. `gtfs_ingest.py`: Stations + Lines (tested against `fixtures/gtfs_mini/`).
+1. `gtfs_ingest.py`: Stations + Lines (tested against `data/fixtures/gtfs_mini/`).
 2. `gtfs_ingest.py`: Legs + Transfers, plus §3.1's line-type normalization test coverage.
 3. `delay_aggregation.py`: bucket + normalize + fallback, tested against a synthetic delay DataFrame.
 4. `id_crosswalk.py`: `stop_id` ↔ station identifier mapping.

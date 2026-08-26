@@ -1,5 +1,5 @@
 """Tests for pipelines/gtfs_scope.py against a small hand-built "national
-feed" fixture (fixtures/gtfs_national_sample/) covering the exclusion
+feed" fixture (data/fixtures/gtfs_national_sample/) covering the exclusion
 reasons a real DB feed needs (DATA_SPEC.md §3 step 2): non-DB agency, a DB
 route whose type doesn't normalize, a DB route that never touches the
 corridor, and a trip whose calendar doesn't cover the requested date --
@@ -15,7 +15,7 @@ from pathlib import Path
 from pipelines.gtfs_ingest import parse_legs, parse_lines, parse_stations
 from pipelines.gtfs_scope import scope_gtfs_feed
 
-FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_national_sample"
+FIXTURE_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_national_sample"
 CORRIDOR_STOP_IDS = {"CORR_A", "CORR_B"}
 
 TUESDAY = date(2026, 8, 25)  # WD (weekday) service active, WEEKEND service not

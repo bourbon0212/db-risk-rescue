@@ -1,6 +1,6 @@
 """Tests for pipelines/calendar_ingest.py (DATA_SPEC.md §6): parsing
 calendar.txt/calendar_dates.txt into plain rows, against the same
-fixtures/gtfs_national_sample/ fixture test_gtfs_scope.py already uses for
+data/fixtures/gtfs_national_sample/ fixture test_gtfs_scope.py already uses for
 its WD/WEEKEND + holiday-exception calendar scenarios.
 """
 
@@ -9,8 +9,8 @@ from pathlib import Path
 
 from pipelines.calendar_ingest import parse_calendar, parse_calendar_exceptions
 
-FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_national_sample"
-NO_CALENDAR_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_smoke"
+FIXTURE_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_national_sample"
+NO_CALENDAR_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_smoke"
 
 
 def test_parse_calendar_reads_weekday_pattern_and_range():

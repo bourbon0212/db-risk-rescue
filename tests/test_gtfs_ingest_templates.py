@@ -2,7 +2,7 @@
 (DATA_SPEC.md §3 steps 5-6): parse_trips, parse_leg_templates, derive_transfer_templates,
 and the _seconds_since_midnight/_anchor_datetime primitives they share with
 the existing anchored parse_legs/derive_transfers. Uses the same
-fixtures/gtfs_mini/ fixture as test_gtfs_ingest.py so results can be checked
+data/fixtures/gtfs_mini/ fixture as test_gtfs_ingest.py so results can be checked
 for exact parity with the already-trusted anchored output.
 """
 
@@ -19,7 +19,7 @@ from pipelines.gtfs_ingest import (
     parse_trips,
 )
 
-FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_mini"
+FIXTURE_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_mini"
 SERVICE_DATE = date(2026, 8, 23)
 
 

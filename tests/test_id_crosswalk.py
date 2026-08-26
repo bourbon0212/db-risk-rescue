@@ -7,7 +7,7 @@ import pytest
 
 from pipelines.id_crosswalk import GTFS_STOP_ID_TO_STATION_ID, STATION_NAMES, to_station_id
 
-MOCK_DATA_PATH = Path(__file__).parent.parent / "mock_data.json"
+MOCK_DATA_PATH = Path(__file__).parent.parent / "data" / "mock_data.json"
 
 
 def test_to_station_id_maps_known_stations():

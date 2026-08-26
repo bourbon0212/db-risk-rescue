@@ -1,5 +1,5 @@
 """Smoke test for pipelines/build_warehouse.py (DATA_SPEC.md §6.4): runs the fixture/
-demo path against fixtures/gtfs_smoke/ (same fixture and synthetic delay
+demo path against data/fixtures/gtfs_smoke/ (same fixture and synthetic delay
 data as test_build_dataset.py's build_dataset() smoke test) and checks the
 written DuckDB warehouse end to end.
 """
@@ -72,7 +72,7 @@ def test_well_sampled_line_keeps_its_own_distribution(conn):
 
 
 def test_calendar_tables_empty_for_fixture_without_calendar_files(conn):
-    """fixtures/gtfs_smoke/ has no calendar.txt -- this only exercises the
+    """data/fixtures/gtfs_smoke/ has no calendar.txt -- this only exercises the
     write path with an empty calendar, not query-time date resolution
     (covered separately by test_route_search_duckdb.py's hand-built
     warehouse)."""
@@ -90,7 +90,7 @@ def test_rebuilding_does_not_duplicate_rows(conn):
 
 def test_stations_get_a_classified_mct(conn):
     """Every station gets a tier-classified mct_minutes (5 or 10) rather
-    than a null/missing value -- fixtures/gtfs_smoke/ is too small for a
+    than a null/missing value -- data/fixtures/gtfs_smoke/ is too small for a
     meaningful hub/standard split, but every row must still be a real int."""
     rows = conn.execute("SELECT mct_minutes FROM stations").fetchall()
     assert len(rows) == 3
@@ -98,7 +98,7 @@ def test_stations_get_a_classified_mct(conn):
 
 
 def test_leg_templates_platform_columns_exist_and_are_nullable(conn):
-    """fixtures/gtfs_smoke/stops.txt has no platform_code column at all --
+    """data/fixtures/gtfs_smoke/stops.txt has no platform_code column at all --
     the write path must still succeed, with every platform value NULL
     rather than the build raising."""
     rows = conn.execute("SELECT origin_platform, destination_platform FROM leg_templates").fetchall()

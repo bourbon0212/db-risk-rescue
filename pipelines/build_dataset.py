@@ -6,7 +6,7 @@ script (run manually or on a schedule), not something data_loader.py or
 app.py invoke at request time.
 
 Two build paths, mirroring build_warehouse.py's structure:
-  - build_dataset():      fixture/demo path (fixtures/gtfs_smoke/), used by
+  - build_dataset():      fixture/demo path (data/fixtures/gtfs_smoke/), used by
                           the smoke test and as __main__'s fallback when no
                           real download is present.
   - build_real_dataset(): the real path over data/raw/'s two feeds. Falls
@@ -38,7 +38,7 @@ from pipelines.gtfs_ingest import (
 from pipelines.gtfs_scope import scope_gtfs_feed
 from pipelines.id_crosswalk import GTFS_STOP_ID_TO_STATION_ID, STATION_NAMES, to_station_id
 
-DEMO_GTFS_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_smoke"
+DEMO_GTFS_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_smoke"
 DEMO_SERVICE_DATE = date(2026, 8, 23)
 DEFAULT_OUTPUT_PATH = Path(__file__).parent.parent / "data" / "real_dataset.json"
 
@@ -74,7 +74,7 @@ def _rows(line_id: str, line_type: str, delay_minutes: float, count: int) -> lis
 def demo_historical_delays() -> pd.DataFrame:
     """Synthetic stand-in for the piebro Parquet archive (DATA_SPEC.md §4
     step 1), sized to exercise both the well-sampled and fallback-pooling
-    paths for every line in fixtures/gtfs_smoke/.
+    paths for every line in data/fixtures/gtfs_smoke/.
     """
     rows: list[dict] = []
     rows += _rows("ICE 15", "ICE", 0, 25) + _rows("ICE 15", "ICE", 15, 10)  # well-sampled

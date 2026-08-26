@@ -1,5 +1,5 @@
 """Smoke test for pipelines/build_dataset.py (DATA_SPEC.md §8 build sequence
-step 5): runs the full pipeline against fixtures/gtfs_smoke/ and a synthetic
+step 5): runs the full pipeline against data/fixtures/gtfs_smoke/ and a synthetic
 historical-delay DataFrame, and checks the assembled MockDataset end to end.
 """
 
@@ -20,7 +20,7 @@ from pipelines.build_dataset import (
 )
 from pipelines.gtfs_ingest import LINE_TYPES
 
-FIXTURE_DIR = __import__("pathlib").Path(__file__).parent.parent / "fixtures" / "gtfs_mini"
+FIXTURE_DIR = __import__("pathlib").Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_mini"
 
 
 @pytest.fixture(scope="module")
@@ -84,7 +84,7 @@ def test_routes_are_empty_until_route_search_is_built(dataset):
 
 
 def test_build_dataset_raises_for_a_feed_outside_the_crosswalked_corridor():
-    """fixtures/gtfs_mini/ uses raw stop_ids ("DE_FRA_HBF", ...) that are
+    """data/fixtures/gtfs_mini/ uses raw stop_ids ("DE_FRA_HBF", ...) that are
     final-form ids, not the GTFS_PLACEHOLDER_* keys id_crosswalk knows about
     -- so running it through build_dataset must fail loudly, not silently
     pass unmapped ids through."""

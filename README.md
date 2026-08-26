@@ -91,15 +91,26 @@ Four specs, each owning one thing. Pick by what you're changing:
 
 ## Project layout
 
+One rule: **every dataset lives under `data/`, all Python lives at the root or in `pipelines/`.**
+
 ```
 app.py              Streamlit entry point — search flow, caching, pagination
 engine.py           Monte Carlo simulation, risk scoring, fallback re-routing
 models.py           The Pydantic contract everything is built around
 ui_components.py    Route cards, risk colours, the expanded itinerary
-data_loader.py      Loads the JSON backends
+data_loader.py      Loads the JSON backends (Mock, Snapshot)
 db.py               DuckDB connection helper for the Warehouse backend
 pipelines/          Ingestion, delay aggregation, route search, warehouse build
-fixtures/           Small GTFS fixtures used by the demo pipeline and the test suite
-mock_data.json      The Mock backend's hand-authored dataset
-tests/              pytest suite (test_*.py) and conftest.py roots the import path
+tests/              pytest suite; conftest.py at the root puts imports on sys.path
+
+data/
+  mock_data.json     Mock backend — hand-authored, committed
+  real_dataset.json  Snapshot backend — pipeline output, committed
+  warehouse.duckdb   Warehouse backend — pipeline output, gitignored
+  fixtures/          Small GTFS feeds for the demo pipeline and the test suite
+  raw/               Downloaded GTFS.DE / piebro archives, gitignored
 ```
+
+The three files at the top of `data/` are the three backends the sidebar radio
+switches between (`SPEC.md` §4.2). Only the first two are in git — see
+"Missing-data degradation" in `SPEC.md` §4.2 for what happens on a fresh clone.

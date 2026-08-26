@@ -22,7 +22,7 @@ from pipelines.gtfs_ingest import (
     parse_stations,
 )
 
-FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_mini"
+FIXTURE_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_mini"
 SERVICE_DATE = date(2026, 8, 23)
 
 
@@ -146,7 +146,7 @@ def test_parse_legs_sets_scheduled_times_from_feed():
 
 def test_parse_legs_sets_platform_when_available():
     """T1::0 runs FRA (Gleis 7) -> KOL (Gleis 3) -- both endpoints in
-    fixtures/gtfs_mini/stops.txt carry a platform_code."""
+    data/fixtures/gtfs_mini/stops.txt carry a platform_code."""
     legs = parse_legs(FIXTURE_DIR, SERVICE_DATE)
     t1_leg = next(leg for leg in legs if leg.leg_id == "T1::0")
     assert t1_leg.origin_platform == "7"

@@ -3,7 +3,7 @@
 filtering as scope_gtfs_feed, but with no service_date -- every service_id's
 trips survive, and calendar.txt/calendar_dates.txt are copied through so the
 Warehouse build can resolve active services per query date instead of one
-date baked in at build time. Uses the same fixtures/gtfs_national_sample/
+date baked in at build time. Uses the same data/fixtures/gtfs_national_sample/
 fixture as test_gtfs_scope.py.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from pipelines.gtfs_scope import scope_gtfs_feed_multi_day
 
-FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_national_sample"
+FIXTURE_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_national_sample"
 CORRIDOR_STOP_IDS = {"CORR_A", "CORR_B"}
 
 
