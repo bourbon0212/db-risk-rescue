@@ -51,7 +51,9 @@
     font-size:15px; color:var(--muted); font-weight:700; cursor:pointer; justify-self:center;
   }
   .search-divider{border:none; border-top:1px solid var(--line); margin:16px 0 14px;}
-  .secondary-row{display:grid; grid-template-columns:1fr 1fr 1.4fr; gap:12px; align-items:end;}
+  /* Date + Departure only. Sort sits on its own full-width row below --
+     three fields here left all of them cramped (UIUX_SPEC.md §6 #10). */
+  .secondary-row{display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:end;}
   .sort-group{display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; width:100%;}
   .sort-option{flex:1; text-align:center; padding:9px 10px; font-size:12px; font-weight:600; color:var(--muted); cursor:pointer;}
   .sort-option.active{background:var(--ink); color:#fff;}
@@ -63,6 +65,7 @@
     overflow:hidden; box-shadow:0 1px 2px rgba(20,20,30,.04);
     margin-bottom:14px; border-left:4px solid var(--line);
   }
+  .card.strip-low{border-left-color:var(--low-border);}
   .card.strip-medium{border-left-color:var(--med-border);}
   .card.strip-high{border-left-color:var(--high-border);}
 
@@ -70,15 +73,29 @@
   .sched-time{font-size:20px; font-weight:700; font-variant-numeric:tabular-nums;}
   .sched-meta{font-size:12px; color:var(--muted); margin-top:2px;}
 
-  .predictions{border:1px solid var(--line); border-radius:8px; padding:7px 13px 8px; min-width:158px;}
+  .predictions{border:1px solid var(--line); border-radius:8px; padding:7px 13px 8px;}
   .pred-cap{font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:var(--faint); text-align:right; margin-bottom:5px;}
-  .pred-row{display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:2px 0;}
-  .pred-row + .pred-row{border-top:1px dashed var(--line); margin-top:5px; padding-top:6px;}
-  .pred-name{font-size:11px; font-weight:600; color:var(--muted);}
-  .pred-value{font-variant-numeric:tabular-nums;}
-  .pred-row.expected .pred-value{font-size:13px; font-weight:700; color:var(--ink);}
-  .pred-row.safest .pred-value{font-size:16px; font-weight:700; color:var(--ink);}
-  .pred-delta{font-size:10px; color:var(--faint); font-weight:600; margin-left:3px;}
+
+  /* Expected and Safest sit side-by-side, each an unbreakable single line;
+     they stack only on a narrow viewport (media query below). */
+  .pred-rows{display:flex; flex-direction:row; align-items:center; gap:14px;}
+  .pred-row{display:flex; flex-direction:row; align-items:baseline; gap:6px; white-space:nowrap;}
+  .pred-row + .pred-row{border-left:1px dashed var(--line); padding-left:14px;}
+  .pred-name{font-size:11px; font-weight:600; color:var(--muted); white-space:nowrap;}
+  .pred-value{font-variant-numeric:tabular-nums; white-space:nowrap;}
+
+  /* Safest is the recommendation, Expected is supporting context -- the
+     weight/size/colour split is what says so. */
+  .pred-row.expected .pred-value{font-size:13px; font-weight:500; color:var(--muted);}
+  .pred-row.safest .pred-name{color:var(--ink); font-weight:700;}
+  .pred-row.safest .pred-value{font-size:17px; font-weight:800; color:var(--ink);}
+  .pred-delta{font-size:10px; color:var(--faint); font-weight:600; margin-left:3px; white-space:nowrap;}
+
+  @media (max-width: 480px) {
+    .pred-rows{flex-direction:column; align-items:stretch; gap:0;}
+    .pred-row{justify-content:space-between;}
+    .pred-row + .pred-row{border-left:none; border-top:1px dashed var(--line); margin-top:5px; padding-top:6px; padding-left:0;}
+  }
 
   .train-bar{display:flex; gap:3px; padding:12px 16px 0;}
   .chip{display:flex; align-items:center; justify-content:center; min-height:34px; border-radius:5px; font-size:12.5px; font-weight:700; letter-spacing:.02em; padding:0 10px; min-width:78px;}
@@ -161,12 +178,15 @@
         <label>Departure at or after</label>
         <div class="input-box"><span>00:00</span></div>
       </div>
-      <div class="field">
-        <label>Sort by</label>
-        <div class="sort-group">
-          <div class="sort-option active">Earliest scheduled</div>
-          <div class="sort-option">Safest arrival</div>
-        </div>
+    </div>
+
+    <hr class="search-divider">
+
+    <div class="field">
+      <label>Sort by</label>
+      <div class="sort-group">
+        <div class="sort-option active">Earliest scheduled</div>
+        <div class="sort-option">Safest arrival</div>
       </div>
     </div>
   </div>
@@ -176,7 +196,7 @@
   <div class="section-title">2 · Route cards — condensed risk wording</div>
   <p class="section-desc">One phrase, one number, one figure: <code>&lt;action&gt; (&lt;X%&gt; risk) · &lt;figure&gt;</code>, no separate description clause. The action-first wording ("Miss likely" rather than a bare "High risk") is deliberate — a label that only names a severity leaves the reader to work out risk <em>of what</em>. All five states are shown together in section 3.</p>
 
-  <div class="card">
+  <div class="card strip-low">
     <div class="head-row">
       <div>
         <div class="sched-time">21:44 – 01:07</div>
@@ -184,8 +204,10 @@
       </div>
       <div class="predictions">
         <div class="pred-cap">Predicted arrival</div>
-        <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">01:16</span><span class="pred-delta">+9m</span></span></div>
-        <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">01:22</span><span class="pred-delta">+15m</span></span></div>
+        <div class="pred-rows">
+          <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">01:16</span><span class="pred-delta">+9m</span></span></div>
+          <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">01:22</span><span class="pred-delta">+15m</span></span></div>
+        </div>
       </div>
     </div>
     <div class="train-bar"><div class="chip chip-ice" style="flex:1;">ICE 91</div></div>
@@ -217,8 +239,10 @@
       </div>
       <div class="predictions">
         <div class="pred-cap">Predicted arrival</div>
-        <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">02:43</span><span class="pred-delta">+24m</span></span></div>
-        <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">03:19</span><span class="pred-delta">+60m</span></span></div>
+        <div class="pred-rows">
+          <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">02:43</span><span class="pred-delta">+24m</span></span></div>
+          <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">03:19</span><span class="pred-delta">+60m</span></span></div>
+        </div>
       </div>
     </div>
     <div class="train-bar">
@@ -272,8 +296,10 @@
       </div>
       <div class="predictions">
         <div class="pred-cap">Predicted arrival</div>
-        <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">03:29</span><span class="pred-delta">+12m</span></span></div>
-        <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">04:12</span><span class="pred-delta">+55m</span></span></div>
+        <div class="pred-rows">
+          <div class="pred-row expected"><span class="pred-name">Expected</span><span><span class="pred-value">03:29</span><span class="pred-delta">+12m</span></span></div>
+          <div class="pred-row safest"><span class="pred-name">Safest</span><span><span class="pred-value">04:12</span><span class="pred-delta">+55m</span></span></div>
+        </div>
       </div>
     </div>
     <div class="train-bar">
