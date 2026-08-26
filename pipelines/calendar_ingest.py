@@ -16,8 +16,6 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-WEEKDAY_COLUMNS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-
 
 @dataclass(frozen=True)
 class ServiceCalendarRow:

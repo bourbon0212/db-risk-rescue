@@ -8,9 +8,10 @@ import math
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
 
+from gtfs_time import parse_gtfs_time, seconds_since_midnight
 from models import Leg, Line, Station, Transfer
 
 # Exact strings engine.py's SERVICE_FREQUENCY_MINUTES keys on (DATA_SPEC.md §3.1).
@@ -163,29 +164,6 @@ def parse_lines(gtfs_dir: Path) -> list[Line]:
     return lines
 
 
-def _seconds_since_midnight(time_str: str) -> int:
-    """Parse a GTFS HH:MM:SS time (hours may exceed 23 for post-midnight
-    trips) into seconds since midnight of its nominal service day -- the
-    date-agnostic form leg_templates store (DATA_SPEC.md §3 step 5), shared
-    with _parse_gtfs_time below so the anchored and template-based parsers
-    can't drift apart on how they read the same column."""
-    hours, minutes, seconds = (int(x) for x in time_str.strip().split(":"))
-    return hours * 3600 + minutes * 60 + seconds
-
-
-def _anchor_datetime(seconds_since_midnight: int, service_date: date) -> datetime:
-    """Turn a date-agnostic seconds-since-midnight offset into a concrete
-    datetime anchored on service_date -- the inverse of _seconds_since_midnight."""
-    midnight = datetime.combine(service_date, datetime.min.time())
-    return midnight + timedelta(seconds=seconds_since_midnight)
-
-
-def _parse_gtfs_time(time_str: str, service_date: date) -> datetime:
-    """Convert a GTFS HH:MM:SS time (hours may exceed 23 for post-midnight
-    trips) into a full datetime anchored on service_date."""
-    return _anchor_datetime(_seconds_since_midnight(time_str), service_date)
-
-
 def _load_stop_to_station_map(gtfs_dir: Path) -> dict[str, str]:
     """Map every GTFS stop_id to its parent station's stop_id.
 
@@ -253,10 +231,10 @@ def parse_legs(gtfs_dir: Path, service_date: date) -> list[Leg]:
                     line_id=line_id,
                     origin_station_id=stop_to_station[origin_row["stop_id"]],
                     destination_station_id=stop_to_station[dest_row["stop_id"]],
-                    scheduled_departure=_parse_gtfs_time(
+                    scheduled_departure=parse_gtfs_time(
                         origin_row["departure_time"], service_date
                     ),
-                    scheduled_arrival=_parse_gtfs_time(dest_row["arrival_time"], service_date),
+                    scheduled_arrival=parse_gtfs_time(dest_row["arrival_time"], service_date),
                     delay_distribution_minutes={"0": 1.0},
                     origin_platform=_platform_or_none(stop_to_platform, origin_row["stop_id"]),
                     destination_platform=_platform_or_none(stop_to_platform, dest_row["stop_id"]),
@@ -362,8 +340,8 @@ def parse_leg_templates(gtfs_dir: Path) -> list[LegTemplate]:
                     sequence_index=i,
                     origin_station_id=stop_to_station[origin_row["stop_id"]],
                     destination_station_id=stop_to_station[dest_row["stop_id"]],
-                    departure_seconds=_seconds_since_midnight(origin_row["departure_time"]),
-                    arrival_seconds=_seconds_since_midnight(dest_row["arrival_time"]),
+                    departure_seconds=seconds_since_midnight(origin_row["departure_time"]),
+                    arrival_seconds=seconds_since_midnight(dest_row["arrival_time"]),
                     origin_platform=_platform_or_none(stop_to_platform, origin_row["stop_id"]),
                     destination_platform=_platform_or_none(stop_to_platform, dest_row["stop_id"]),
                 )
@@ -445,8 +423,8 @@ def parse_corridor_legs(gtfs_dir: Path, service_date: date, corridor_stop_ids: s
             line_id=r.line_id,
             origin_station_id=r.origin_station_id,
             destination_station_id=r.destination_station_id,
-            scheduled_departure=_parse_gtfs_time(r.origin_departure_time, service_date),
-            scheduled_arrival=_parse_gtfs_time(r.destination_arrival_time, service_date),
+            scheduled_departure=parse_gtfs_time(r.origin_departure_time, service_date),
+            scheduled_arrival=parse_gtfs_time(r.destination_arrival_time, service_date),
             delay_distribution_minutes={"0": 1.0},
             origin_platform=r.origin_platform,
             destination_platform=r.destination_platform,
@@ -467,8 +445,8 @@ def parse_corridor_leg_templates(gtfs_dir: Path, corridor_stop_ids: set[str]) ->
             sequence_index=r.sequence_index,
             origin_station_id=r.origin_station_id,
             destination_station_id=r.destination_station_id,
-            departure_seconds=_seconds_since_midnight(r.origin_departure_time),
-            arrival_seconds=_seconds_since_midnight(r.destination_arrival_time),
+            departure_seconds=seconds_since_midnight(r.origin_departure_time),
+            arrival_seconds=seconds_since_midnight(r.destination_arrival_time),
             origin_platform=r.origin_platform,
             destination_platform=r.destination_platform,
         )

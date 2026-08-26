@@ -23,9 +23,8 @@ from datetime import date, datetime, time
 
 import duckdb
 
+from gtfs_time import WEEKDAY_COLUMNS, anchor_datetime
 from models import Leg, Route, Transfer
-from pipelines.calendar_ingest import WEEKDAY_COLUMNS
-from pipelines.gtfs_ingest import _anchor_datetime
 
 _ACTIVE_SERVICES_SQL = """
 CREATE OR REPLACE TEMP TABLE _active_service_ids AS
@@ -128,8 +127,8 @@ def _materialize_leg(
         line_id=line_id,
         origin_station_id=origin_id,
         destination_station_id=destination_id,
-        scheduled_departure=_anchor_datetime(departure_seconds, service_date),
-        scheduled_arrival=_anchor_datetime(arrival_seconds, service_date),
+        scheduled_departure=anchor_datetime(departure_seconds, service_date),
+        scheduled_arrival=anchor_datetime(arrival_seconds, service_date),
         delay_distribution_minutes=distributions.get(line_id),
         origin_platform=origin_platform,
         destination_platform=destination_platform,

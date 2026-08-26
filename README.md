@@ -101,6 +101,7 @@ models.py           The Pydantic contract everything is built around
 ui_components.py    Route cards, risk colours, the expanded itinerary
 data_loader.py      Loads the JSON backends (Mock, Snapshot)
 db.py               DuckDB connection helper for the Warehouse backend
+gtfs_time.py        GTFS time/calendar helpers shared by pipelines/ and routing/
 pytest.ini          Puts the repo root on sys.path so tests/ can import the above
 
 pipelines/          Offline ingestion, delay aggregation, warehouse build (python -m)

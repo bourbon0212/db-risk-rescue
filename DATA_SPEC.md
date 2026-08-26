@@ -42,6 +42,9 @@ routing/                  # query-time, not build-time: imported by app.py and e
   route_search.py         # in-memory candidate Route generation over a loaded MockDataset (§5)
   route_search_duckdb.py  # DuckDB-backed candidate Route generation, calendar-aware (§5, §6)
   route_filters.py        # Sanity Filter — prunes detour routes post-search (SPEC.md §3.7)
+gtfs_time.py              # seconds-since-midnight <-> datetime, plus calendar.txt's
+                          # weekday columns -- the vocabulary pipelines/ writes and
+                          # routing/ reads, owned by neither (§3 step 5, §6)
 db.py                     # DuckDB connection helper, mirrors data_loader.py (§7)
 data_loader.py            # loads mock_data.json / real_dataset.json into MockDataset (§7)
 data/                     # every dataset lives here -- nothing data-shaped at the root

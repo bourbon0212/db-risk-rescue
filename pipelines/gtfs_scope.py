@@ -14,9 +14,9 @@ import csv
 from datetime import date as date_type
 from pathlib import Path
 
+from gtfs_time import WEEKDAY_COLUMNS
 from pipelines.gtfs_ingest import _normalize_line_type
 
-_WEEKDAY_COLUMNS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 # Real DB entities in GTFS.DE's agency.txt use several regional-subsidiary
 # names (e.g. "DB Regio AG Bayern", "DB Regio AG NRW", "DB Fernverkehr AG")
@@ -53,7 +53,7 @@ def _active_service_ids(gtfs_dir: Path, service_date: date_type) -> set[str]:
     overlapping legs that don't reflect any single real day.
     """
     yyyymmdd = service_date.strftime("%Y%m%d")
-    weekday_column = _WEEKDAY_COLUMNS[service_date.weekday()]
+    weekday_column = WEEKDAY_COLUMNS[service_date.weekday()]
 
     active: set[str] = set()
     calendar_path = gtfs_dir / "calendar.txt"

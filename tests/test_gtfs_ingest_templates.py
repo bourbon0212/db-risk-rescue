@@ -1,17 +1,16 @@
 """Tests for pipelines/gtfs_ingest.py's date-agnostic parsers
 (DATA_SPEC.md §3 steps 5-6): parse_trips, parse_leg_templates, derive_transfer_templates,
-and the _seconds_since_midnight/_anchor_datetime primitives they share with
-the existing anchored parse_legs/derive_transfers. Uses the same
+checked against the existing anchored parse_legs/derive_transfers. The
+gtfs_time primitives they share are covered by test_gtfs_time.py. Uses the same
 data/fixtures/gtfs_mini/ fixture as test_gtfs_ingest.py so results can be checked
 for exact parity with the already-trusted anchored output.
 """
 
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
+from gtfs_time import anchor_datetime
 from pipelines.gtfs_ingest import (
-    _anchor_datetime,
-    _seconds_since_midnight,
     derive_transfer_templates,
     derive_transfers,
     parse_leg_templates,
@@ -21,22 +20,6 @@ from pipelines.gtfs_ingest import (
 
 FIXTURE_DIR = Path(__file__).parent.parent / "data" / "fixtures" / "gtfs_mini"
 SERVICE_DATE = date(2026, 8, 23)
-
-
-# --- time-parsing primitives -------------------------------------------------
-
-
-def test_seconds_since_midnight_parses_hms():
-    assert _seconds_since_midnight("09:02:00") == 9 * 3600 + 2 * 60
-
-
-def test_seconds_since_midnight_handles_post_midnight_hours():
-    assert _seconds_since_midnight("25:15:00") == 25 * 3600 + 15 * 60
-
-
-def test_anchor_datetime_is_the_inverse():
-    seconds = _seconds_since_midnight("09:02:00")
-    assert _anchor_datetime(seconds, SERVICE_DATE) == datetime(2026, 8, 23, 9, 2, 0)
 
 
 # --- parse_trips --------------------------------------------------------------
@@ -69,8 +52,8 @@ def test_leg_templates_match_anchored_legs_when_re_anchored():
         assert template.line_id == leg.line_id
         assert template.origin_station_id == leg.origin_station_id
         assert template.destination_station_id == leg.destination_station_id
-        assert _anchor_datetime(template.departure_seconds, SERVICE_DATE) == leg.scheduled_departure
-        assert _anchor_datetime(template.arrival_seconds, SERVICE_DATE) == leg.scheduled_arrival
+        assert anchor_datetime(template.departure_seconds, SERVICE_DATE) == leg.scheduled_departure
+        assert anchor_datetime(template.arrival_seconds, SERVICE_DATE) == leg.scheduled_arrival
         assert template.origin_platform == leg.origin_platform
         assert template.destination_platform == leg.destination_platform
 
