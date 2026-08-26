@@ -165,7 +165,14 @@ assets/
 .streamlit/
   config.toml        Native Streamlit widget theme (UIUX_SPEC.md §3 owns the values)
   secrets.toml       WAREHOUSE_URL, if you set one locally — gitignored, never committed
+
+.devcontainer/
+  devcontainer.json  Codespaces: Python 3.11, installs requirements.txt, runs app.py
 ```
+
+A Codespace comes up on the runtime dependencies only, so `pip install -r
+requirements-dev.txt` first if you want to run the tests or the pipelines in
+one.
 
 **Where a new module goes.** The root is for app-level modules — anything
 `app.py` imports directly to run a request. Offline build code goes in
