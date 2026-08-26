@@ -32,6 +32,9 @@ data/raw/
 # data/real_dataset.json, this one IS excluded: it's a binary database file
 # (not a diffable JSON snapshot) that would bloat the repo on every rebuild.
 *.duckdb
+# ...and the half-written file warehouse_fetch.py streams into before
+# renaming it over *.duckdb, which the rule above doesn't match.
+*.duckdb.part
 
 # OS, editor, and IDE droppings. None are present today -- these are
 # preventive. desktop.ini is the notable one: this repo lives inside a

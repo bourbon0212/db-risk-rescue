@@ -24,6 +24,10 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+`requirements.txt` is what the app itself needs. To run the tests or the data
+pipelines, install `requirements-dev.txt` instead — it pulls in the runtime
+file and adds the rest.
+
 The app opens on a search form: pick an origin, destination and departure time, and it returns ranked route cards showing predicted arrivals and transfer risk. Open **Details** on any card for the leg-by-leg itinerary.
 
 ### What data you get on a fresh clone
@@ -38,7 +42,8 @@ The sidebar has a **Data source** selector with three backends. Two work immedia
 
 > **Heads-up on your first run.** Warehouse is selected by default, but its database file is a build artifact and isn't in the repo. When it's missing the app says so in the sidebar and drops to **Snapshot** — still real data, just pinned to one date. Build the warehouse when you want to search other dates.
 
-To build the Warehouse backend yourself (downloads a few hundred MB of raw feeds):
+To build the Warehouse backend yourself (needs `requirements-dev.txt`, and
+downloads a few hundred MB of raw feeds):
 
 ```bash
 python -m pipelines.download_raw_data
@@ -48,7 +53,17 @@ python -m pipelines.download_raw_data
 python -m pipelines.build_warehouse
 ```
 
+A deployed copy of the app can't build anything, so it fetches the finished
+database instead: set a `WAREHOUSE_URL` secret pointing at a hosted
+`warehouse.duckdb` and the app downloads it once on startup. Full recipe —
+GitHub Release, Streamlit Community Cloud settings, what happens when it
+fails — in `DATA_SPEC.md` §8.3.
+
 ### Running the tests
+
+```bash
+pip install -r requirements-dev.txt
+```
 
 ```bash
 python -m pytest
@@ -95,24 +110,26 @@ And one wart: the Pydantic class holding a loaded dataset is called **`MockDatas
 
 ## Project layout
 
-The root holds the application modules, the docs, and two config files —
+The root holds the application modules, the docs, and three config files —
 nothing else. Datasets live in `data/`, tests in `tests/`, the design reference
 in `design/`, and README imagery in `assets/`.
 
 ```
-app.py              Streamlit entry point — search flow, caching, pagination
-engine.py           Monte Carlo simulation, risk scoring, fallback re-routing
-models.py           The Pydantic contract everything is built around
-ui_components.py    Route cards, risk colours, the expanded itinerary
-data_loader.py      Loads the JSON backends (Mock, Snapshot)
-db.py               DuckDB connection helper for the Warehouse backend
-gtfs_time.py        GTFS time/calendar helpers shared by pipelines/ and routing/
-pytest.ini          Puts the repo root on sys.path so tests/ can import the above
-requirements.txt    Pinned dependencies
+app.py                  Streamlit entry point — search flow, caching, pagination
+engine.py               Monte Carlo simulation, risk scoring, fallback re-routing
+models.py               The Pydantic contract everything is built around
+ui_components.py        Route cards, risk colours, the expanded itinerary
+data_loader.py          Loads the JSON backends (Mock, Snapshot)
+db.py                   DuckDB connection helper for the Warehouse backend
+warehouse_fetch.py      Fetches the Warehouse database on a deploy, which can't build it
+gtfs_time.py            GTFS time/calendar helpers shared by pipelines/ and routing/
+pytest.ini              Puts the repo root on sys.path so tests/ can import the above
+requirements.txt        Pinned runtime dependencies — what a deploy installs
+requirements-dev.txt    The above plus pytest and the pipelines' tqdm
 
-pipelines/          Offline ingestion, delay aggregation, warehouse build (python -m)
-routing/            Candidate route search and filtering, on every request
-tests/              The pytest suite
+pipelines/              Offline ingestion, delay aggregation, warehouse build (python -m)
+routing/                Candidate route search and filtering, on every request
+tests/                  The pytest suite
 
 data/
   mock_data.json     Mock backend — hand-authored, committed

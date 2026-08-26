@@ -1,0 +1,12 @@
+# Everything the runtime needs, plus the tools only a contributor uses:
+# running the test suite and the offline pipelines. Install this one to work
+# on the project -- Streamlit Community Cloud installs requirements.txt, so
+# nothing added below reaches a deploy.
+-r requirements.txt
+
+pytest==9.1.1
+
+# pipelines/download_raw_data.py's progress bar. It has always been an
+# import-guarded manual install ("pip install tqdm" in that script's
+# docstring); this is where it should have been declared.
+tqdm==4.70.0

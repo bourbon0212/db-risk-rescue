@@ -53,13 +53,16 @@ gtfs_time.py              # seconds-since-midnight <-> datetime, plus calendar.t
                           # weekday columns -- the vocabulary pipelines/ writes and
                           # routing/ reads, owned by neither (§3 step 5, §6)
 db.py                     # DuckDB connection helper, mirrors data_loader.py (§7)
+warehouse_fetch.py        # deploy-only: downloads data/warehouse.duckdb from the
+                          # WAREHOUSE_URL secret when it isn't on disk (§8.3)
 data_loader.py            # loads data/mock_data.json or data/real_dataset.json into a
                           # MockDataset -- the container, not the Mock backend (§7)
 data/                     # every dataset lives here -- nothing data-shaped at the root
   mock_data.json          # Mock backend, hand-authored (committed)
   real_dataset.json       # Snapshot pipeline output (committed)
   warehouse.duckdb        # Warehouse pipeline output (gitignored; rebuild via
-                          # `python -m pipelines.build_warehouse`)
+                          # `python -m pipelines.build_warehouse`, or fetched by
+                          # warehouse_fetch.py on a deploy, §8.3)
   fixtures/               # small hand-built GTFS feeds (demo pipeline + tests)
   raw/                    # downloaded GTFS + piebro snapshots (gitignored)
 ```
@@ -223,6 +226,8 @@ def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:
 
 ## 8. Build & Deployment Sequence
 
+### 8.1 Phase 2 build order
+
 **Phase 2** (still the build path for `data/real_dataset.json`):
 
 1. `gtfs_ingest.py`: Stations + Lines (tested against `data/fixtures/gtfs_mini/`).
@@ -232,12 +237,43 @@ def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:
 5. `build_dataset.py`: wires 1–4, `MockDataset.model_validate()`, writes `data/real_dataset.json`.
 6. `routing/route_search.py` + `app.py` sidebar toggle: smoke-tested against the Snapshot dataset alongside Mock.
 
+### 8.2 Phase 3 build order
+
 **Phase 3** (added once Phase 2 was stable):
 
 7. `calendar_ingest.py` + date-agnostic `parse_trips`/`parse_leg_templates`/`derive_transfer_templates`, tested for parity against the anchored parsers on the same fixture.
 8. `warehouse_writer.py` + `build_warehouse.py`: wires GTFS + calendar + delay pipeline into `data/warehouse.duckdb`; `routing/route_search_duckdb.py` + date picker, smoke-tested alongside Phase 1/2.
 
 Nothing in `models.py`, `engine.py`, `ui_components.py`, or Phase 1/2 tests needed to change at either step. Full phase narrative/rationale: `SPEC.md` §7.
+
+### 8.3 Deploying to Streamlit Community Cloud
+
+Two of the three backends deploy themselves: `data/mock_data.json` and `data/real_dataset.json` are committed, so a Cloud deploy of `main` serves Snapshot with no extra work. The Warehouse backend is the problem — `data/warehouse.duckdb` is a ~58 MB binary build output, gitignored precisely so it never enters the repo's history, and Cloud only ever receives what's in git.
+
+**The strategy: host the file as a GitHub Release asset and fetch it at startup.** A release asset is versioned, public without a token, and lives outside the git object store, so re-uploading a rebuilt warehouse costs nothing in repo size. Git LFS was the alternative and was rejected: it puts the file back in the clone path (LFS bandwidth quotas, and a Cloud build that pays the 58 MB on every redeploy whether or not anyone selects Warehouse).
+
+**`warehouse_fetch.py`** implements the fetch, in two halves — `download_warehouse()` is pure `requests` + filesystem and carries the tests; `ensure_warehouse()` is the Streamlit-aware wrapper `app.py` calls. Four properties are load-bearing:
+
+- **Nothing happens when the file exists.** A local clone that ran `python -m pipelines.build_warehouse` never touches the network, configured URL or not.
+- **`@st.cache_resource`**, so the download runs at most once per server process rather than once per rerun. Failures are cached too — a dead URL costs one attempt, at the price of needing an app reboot after fixing it.
+- **Atomic.** The body streams to `data/warehouse.duckdb.part` and is renamed into place only after it completes and passes a header check. A truncated file at the real path would be indistinguishable from a built warehouse on the next run, and `db.py` opens it read-only, so nothing downstream would repair it.
+- **Header-checked.** DuckDB writes a `DUCK` magic at byte 8. A URL that answers `200` with an HTML page — a private-repo login redirect, an asset renamed between releases — is caught here rather than surfacing much later as an unreadable-database error inside `duckdb.connect()`.
+
+Every failure returns a reason string instead of raising, so `app.py`'s degradation ladder (`SPEC.md` §4.2) is unchanged: no secret, a 404, or a bad body all land on **Snapshot** with a sidebar warning naming the cause.
+
+**Publishing the warehouse:**
+
+1. Build it locally: `python -m pipelines.download_raw_data` then `python -m pipelines.build_warehouse`.
+2. Create a GitHub Release (a tag like `warehouse-YYYY-MM`, matching the ingested calendar window) and upload `data/warehouse.duckdb` as an asset.
+3. Copy the asset's browser-download URL — `https://github.com/<owner>/<repo>/releases/download/<tag>/warehouse.duckdb`.
+
+**Configuring the app** at `share.streamlit.io`: repository `<owner>/<repo>`, branch `main`, main file `app.py`, and under *Advanced settings* Python **3.11** or newer (the version the project targets — README Quickstart) plus one secret:
+
+```toml
+WAREHOUSE_URL = "https://github.com/<owner>/<repo>/releases/download/<tag>/warehouse.duckdb"
+```
+
+Cloud's filesystem is ephemeral, so the download repeats after every reboot or redeploy — one ~58 MB GET, not a per-user cost. Editing the secret to point at a new release, then rebooting the app, is the whole upgrade path; the old asset stays downloadable for anyone pinned to it.
 
 ## 9. Resolved Design Decisions
 

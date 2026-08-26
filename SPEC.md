@@ -239,7 +239,7 @@ The three names are *runtime* labels — what you pick in the sidebar. They line
 
 Reading the table top to bottom is also the project's arc: a hand-authored fixture, then real data pinned to one day, then real data queryable by date.
 
-**Missing-data degradation.** `data/mock_data.json` and `data/real_dataset.json` are both committed, so Mock and Snapshot work on a fresh clone; only `data/warehouse.duckdb` is a gitignored build output. If the selected backend's file is absent, `app.py` shows a sidebar warning naming the build command and degrades to the best backend still on disk rather than erroring: **Warehouse → Snapshot → Mock**. This matters on a fresh clone or deploy, where Warehouse is the default selection but its file is never present — the app serves Snapshot there, real corridor data pinned to one date, and only reaches Mock if `data/real_dataset.json` is missing too. Degrading to the *best* available backend rather than the smallest is deliberate: on Streamlit Community Cloud the Mock fixture's default station pair returns no routes at all, so falling straight to it made a deploy look broken.
+**Missing-data degradation.** `data/mock_data.json` and `data/real_dataset.json` are both committed, so Mock and Snapshot work on a fresh clone; only `data/warehouse.duckdb` is a gitignored build output. If the selected backend's file is absent, `app.py` shows a sidebar warning naming the build command and degrades to the best backend still on disk rather than erroring: **Warehouse → Snapshot → Mock**. This matters on a fresh clone or deploy, where Warehouse is the default selection but its file is never present — the app serves Snapshot there, real corridor data pinned to one date, and only reaches Mock if `data/real_dataset.json` is missing too. Degrading to the *best* available backend rather than the smallest is deliberate: on Streamlit Community Cloud the Mock fixture's default station pair returns no routes at all, so falling straight to it made a deploy look broken. A deploy can also skip the ladder entirely: when a `WAREHOUSE_URL` secret is set, `warehouse_fetch.ensure_warehouse()` downloads the missing file once before the fallback runs, and only its reason for failing — no secret, a dead URL, a body that isn't a database — reaches the sidebar warning (`DATA_SPEC.md` §8.3).
 
 ### 4.3 Streamlit Caching Strategy
 
@@ -332,6 +332,14 @@ Every hardcoded constant in the app, in one place. If a value changes, update it
 | Min. historical samples | 30 | `delay_aggregation.DEFAULT_MIN_SAMPLES` | Below this, fall back to train-type-level aggregate (`DATA_SPEC.md` §9.2) |
 | Delay bucket scheme | 0, 5, 15, 30, 60 min | `delay_aggregation.bucket_delay` | Matches `engine.py`'s bucket interpretation (`DATA_SPEC.md` §4) |
 | Corridor size | 33 stations ("Golden 35") | `pipelines/id_crosswalk.py` | `DATA_SPEC.md` §9.1 |
+
+**Deployment**
+
+| Constant | Value | Code location | Rationale |
+|---|---|---|---|
+| Warehouse URL secret name | `WAREHOUSE_URL` | `warehouse_fetch.SECRET_KEY` | Where a deploy fetches the gitignored warehouse from (`DATA_SPEC.md` §8.3) |
+| Warehouse download timeout | 30 s | `warehouse_fetch.DOWNLOAD_TIMEOUT_SECONDS` | Per-read, not whole-transfer: a slow 58 MB fetch is fine, a stalled one isn't |
+| Warehouse download chunk | 1 MiB | `warehouse_fetch.CHUNK_BYTES` | Same size `download_raw_data.py` streams its GTFS/Parquet downloads at |
 
 ## 7. Development History & Phases
 

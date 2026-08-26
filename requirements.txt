@@ -1,7 +1,14 @@
+# Runtime dependencies -- what a deploy of app.py needs, and nothing else.
+# Contributors want requirements-dev.txt instead (it includes this file).
 streamlit==1.62.0
-pandas==3.0.5
-pyarrow==25.0.1
 pydantic==2.13.4
 duckdb==1.5.5
-pytest==9.1.1
 requests==2.34.2
+
+# pandas and pyarrow are imported only by pipelines/ (offline builds) and the
+# tests, so by rights they belong in requirements-dev.txt. They stay pinned
+# here because streamlit hard-depends on both: dropping them wouldn't shorten
+# a Cloud build by a second, it would just leave the resolver free to install
+# whatever versions it likes.
+pandas==3.0.5
+pyarrow==25.0.1

@@ -17,7 +17,7 @@ https://huggingface.co/datasets/piebro/deutsche-bahn-data to see which
 months exist, then pass --months (DEFAULT_MONTHS only tracks one).
 
 HOW TO RUN (see the very bottom of this file too):
-    pip install requests tqdm      # tqdm isn't in this project's venv yet
+    pip install -r requirements-dev.txt      # tqdm lives there, not in requirements.txt
     python -m pipelines.download_raw_data
 
 Downloads only what's missing by default (skips a file that already exists
@@ -37,7 +37,7 @@ try:
 except ImportError as exc:  # pragma: no cover - human-run script, not exercised by pytest
     raise SystemExit(
         "This script needs tqdm for its progress bar. Install it first:\n"
-        "    pip install tqdm"
+        "    pip install -r requirements-dev.txt"
     ) from exc
 
 RAW_DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
@@ -153,7 +153,7 @@ if __name__ == "__main__":
 
 # To run this script from the project root:
 #
-#   pip install requests tqdm
+#   pip install -r requirements-dev.txt
 #   python -m pipelines.download_raw_data
 #
 # Options:

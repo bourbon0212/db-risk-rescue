@@ -10,6 +10,7 @@ import duckdb
 import streamlit as st
 
 import db
+import warehouse_fetch
 from data_loader import MOCK_DATA_PATH, REAL_DATA_PATH, load_dataset
 from engine import RouteSimulationResult, index_dataset, precompute_fallback_plans, simulate_route
 from models import Leg, Line, MockDataset, Route, Station, Transfer
@@ -56,21 +57,34 @@ with st.sidebar:
 use_warehouse = data_source_label == LABEL_WAREHOUSE
 
 if use_warehouse and not db.WAREHOUSE_PATH.exists():
+    # The file is a gitignored build output, so on a deploy it has to come
+    # from somewhere else: warehouse_fetch downloads it once from the
+    # WAREHOUSE_URL secret if one is set (DATA_SPEC.md §8.3). Returns None
+    # when the file is now on disk, otherwise the reason it isn't.
+    fetch_error = warehouse_fetch.ensure_warehouse()
+else:
+    fetch_error = None
+
+if use_warehouse and fetch_error is not None:
     # Degrade to the best backend that's actually present, not straight to the
     # smallest one: data/real_dataset.json is committed, so on a fresh clone or
     # a Cloud deploy Snapshot is real data and Mock is an 11-station fixture
     # (SPEC.md §4.2).
+    build_hint = (
+        "Build it with `python -m pipelines.build_warehouse`, or set a "
+        f"`{warehouse_fetch.SECRET_KEY}` secret pointing at a hosted copy."
+    )
     if REAL_DATA_PATH.exists():
         data_source_label = LABEL_SNAPSHOT
         st.sidebar.warning(
-            "data/warehouse.duckdb not found — showing **Snapshot** (real data, one "
-            "fixed date). Run `python -m pipelines.build_warehouse` to search any date."
+            f"data/warehouse.duckdb unavailable — {fetch_error}. Showing **Snapshot** "
+            f"(real data, one fixed date). {build_hint}"
         )
     else:
         data_source_label = LABEL_MOCK
         st.sidebar.warning(
-            "data/warehouse.duckdb not found — run `python -m pipelines.build_warehouse` "
-            "first. Falling back to data/mock_data.json for now."
+            f"data/warehouse.duckdb unavailable — {fetch_error}. Falling back to "
+            f"data/mock_data.json for now. {build_hint}"
         )
     use_warehouse = False
 
