@@ -20,7 +20,7 @@ from pipelines.build_dataset import (
 )
 from pipelines.gtfs_ingest import LINE_TYPES
 
-FIXTURE_DIR = __import__("pathlib").Path(__file__).parent / "fixtures" / "gtfs_mini"
+FIXTURE_DIR = __import__("pathlib").Path(__file__).parent.parent / "fixtures" / "gtfs_mini"
 
 
 @pytest.fixture(scope="module")

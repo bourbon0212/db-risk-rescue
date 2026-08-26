@@ -9,8 +9,8 @@ from pathlib import Path
 
 from pipelines.calendar_ingest import parse_calendar, parse_calendar_exceptions
 
-FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gtfs_national_sample"
-NO_CALENDAR_DIR = Path(__file__).parent / "fixtures" / "gtfs_smoke"
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_national_sample"
+NO_CALENDAR_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_smoke"
 
 
 def test_parse_calendar_reads_weekday_pattern_and_range():

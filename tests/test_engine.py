@@ -23,7 +23,7 @@ from engine import (
 from models import Leg, Line, MockDataset, Route, Station, Transfer
 from pipelines.route_search import find_candidate_routes
 
-MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
+MOCK_DATA_PATH = Path(__file__).parent.parent / "mock_data.json"
 
 
 @pytest.fixture

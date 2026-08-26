@@ -19,7 +19,7 @@ from pipelines.gtfs_ingest import (
     parse_leg_templates,
 )
 
-FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gtfs_corridor_gap"
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_corridor_gap"
 SERVICE_DATE = date(2026, 8, 29)
 CORRIDOR_STOP_IDS = {"DE_A", "DE_C"}  # DE_B is deliberately excluded
 

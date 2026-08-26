@@ -7,7 +7,7 @@ import pytest
 
 from models import Leg, MockDataset
 
-MOCK_DATA_PATH = Path(__file__).parent / "mock_data.json"
+MOCK_DATA_PATH = Path(__file__).parent.parent / "mock_data.json"
 
 
 @pytest.fixture

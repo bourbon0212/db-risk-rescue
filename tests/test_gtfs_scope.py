@@ -15,7 +15,7 @@ from pathlib import Path
 from pipelines.gtfs_ingest import parse_legs, parse_lines, parse_stations
 from pipelines.gtfs_scope import scope_gtfs_feed
 
-FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gtfs_national_sample"
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_national_sample"
 CORRIDOR_STOP_IDS = {"CORR_A", "CORR_B"}
 
 TUESDAY = date(2026, 8, 25)  # WD (weekday) service active, WEEKEND service not

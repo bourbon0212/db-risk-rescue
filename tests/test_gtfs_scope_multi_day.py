@@ -12,7 +12,7 @@ from pathlib import Path
 
 from pipelines.gtfs_scope import scope_gtfs_feed_multi_day
 
-FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gtfs_national_sample"
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_national_sample"
 CORRIDOR_STOP_IDS = {"CORR_A", "CORR_B"}
 
 

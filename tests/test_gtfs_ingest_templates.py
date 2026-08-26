@@ -19,7 +19,7 @@ from pipelines.gtfs_ingest import (
     parse_trips,
 )
 
-FIXTURE_DIR = Path(__file__).parent / "fixtures" / "gtfs_mini"
+FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "gtfs_mini"
 SERVICE_DATE = date(2026, 8, 23)
 
 

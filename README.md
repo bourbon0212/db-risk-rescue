@@ -99,6 +99,7 @@ ui_components.py    Route cards, risk colours, the expanded itinerary
 data_loader.py      Loads the JSON backends
 db.py               DuckDB connection helper for the Warehouse backend
 pipelines/          Ingestion, delay aggregation, route search, warehouse build
-fixtures/           Small GTFS fixtures used by the test suite
+fixtures/           Small GTFS fixtures used by the demo pipeline and the test suite
 mock_data.json      The Mock backend's hand-authored dataset
+tests/              pytest suite (test_*.py) and conftest.py roots the import path
 ```
