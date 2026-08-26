@@ -1,5 +1,5 @@
-"""Tests for pipelines/route_search_duckdb.py (DATA_SPEC.md §5, §6): the DuckDB-backed
-sibling of pipelines/route_search.py's find_candidate_routes, plus the
+"""Tests for routing/route_search_duckdb.py (DATA_SPEC.md §5, §6): the DuckDB-backed
+sibling of routing/route_search.py's find_candidate_routes, plus the
 dynamic-calendar-date filtering and legs_by_id/transfers_by_id mutation
 contract that lets engine.py's precompute_fallback_plans/simulate_route
 consume it exactly like the in-memory path (SPEC.md §3.5).
@@ -21,7 +21,7 @@ from engine import index_dataset, precompute_fallback_plans, simulate_route
 from models import Leg, Line, MockDataset, Station, Transfer
 from pipelines.calendar_ingest import ServiceCalendarException, ServiceCalendarRow
 from pipelines.gtfs_ingest import LegTemplate, TransferTemplate, TripRecord
-from pipelines.route_search_duckdb import calendar_window, find_candidate_routes
+from routing.route_search_duckdb import calendar_window, find_candidate_routes
 from pipelines.warehouse_writer import create_schema, write_warehouse
 
 MONDAY = date(2026, 8, 24)

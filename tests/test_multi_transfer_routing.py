@@ -24,7 +24,7 @@ import pytest
 
 from engine import index_dataset, simulate_route
 from models import Leg, Line, MockDataset, Station, Transfer
-from pipelines.route_search import find_candidate_routes
+from routing.route_search import find_candidate_routes
 
 EARLY = datetime(2026, 8, 23, 0, 0, 0)
 

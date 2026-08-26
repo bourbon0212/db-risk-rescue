@@ -7,7 +7,7 @@ with the size of the ingested calendar window; delay_distributions stays
 long-format and date-independent, matching how DATA_SPEC.md §4 already
 aggregates it (per line_id, no date dimension). Concrete Leg/Transfer
 Pydantic objects are only ever materialized at query time, in
-pipelines/route_search_duckdb.py -- this module never touches models.py.
+routing/route_search_duckdb.py -- this module never touches models.py.
 """
 
 import duckdb

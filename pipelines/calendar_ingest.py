@@ -7,7 +7,7 @@ build_warehouse.py stores them as plain rows (pipelines/warehouse_writer.py)
 rather than collapsing them to one service_date at build time the way
 gtfs_scope.py's single-day scope_gtfs_feed() still does for the Snapshot
 JSON build. Active-service resolution for a given query date happens as SQL
-at route-search time (pipelines/route_search_duckdb.py), not here -- this
+at route-search time (routing/route_search_duckdb.py), not here -- this
 module only parses the raw calendar rows.
 """
 

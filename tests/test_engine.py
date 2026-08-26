@@ -21,7 +21,7 @@ from engine import (
     transfer_miss_probability,
 )
 from models import Leg, Line, MockDataset, Route, Station, Transfer
-from pipelines.route_search import find_candidate_routes
+from routing.route_search import find_candidate_routes
 
 MOCK_DATA_PATH = Path(__file__).parent.parent / "data" / "mock_data.json"
 

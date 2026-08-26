@@ -13,9 +13,9 @@ import db
 from data_loader import MOCK_DATA_PATH, REAL_DATA_PATH, load_dataset
 from engine import RouteSimulationResult, index_dataset, precompute_fallback_plans, simulate_route
 from models import Leg, Line, MockDataset, Route, Station, Transfer
-from pipelines import route_search_duckdb
-from pipelines.route_filters import apply_sanity_filter
-from pipelines.route_search import (
+from routing import route_search_duckdb
+from routing.route_filters import apply_sanity_filter
+from routing.route_search import (
     build_route_search_indexes,
     find_candidate_routes,
 )

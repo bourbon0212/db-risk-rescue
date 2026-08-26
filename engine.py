@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from models import Leg, Line, MockDataset, Route, Station, Transfer
-from pipelines.route_search import find_candidate_routes
+from routing.route_search import find_candidate_routes
 
 # SPEC.md §2.6 — static lookup, not part of the mock JSON.
 SERVICE_FREQUENCY_MINUTES: dict[str, int] = {
@@ -18,7 +18,7 @@ SERVICE_FREQUENCY_MINUTES: dict[str, int] = {
     "S-Bahn": 20,
 }
 
-# SPEC.md §3.4 — must stay in sync with pipelines/route_search.py's 2-transfer cap.
+# SPEC.md §3.4 — must stay in sync with routing/route_search.py's 2-transfer cap.
 MAX_TOTAL_TRANSFERS = 2
 
 

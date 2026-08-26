@@ -1,11 +1,11 @@
-"""Warehouse-backed sibling of pipelines/route_search.py (DATA_SPEC.md §5, §6).
+"""Warehouse-backed sibling of routing/route_search.py (DATA_SPEC.md §5, §6).
 
 Same candidate-route algorithm and Route/Leg/Transfer contract as the
 Mock/Snapshot in-memory find_candidate_routes() -- direct, single-transfer, and
 two-transfer journeys, sorted by scheduled_departure -- but every step's
 candidate set comes from a small, origin/date-scoped DuckDB query against
 the warehouse's date-agnostic leg_templates/transfer_templates instead of
-scanning an in-memory MockDataset. pipelines/route_search.py itself is
+scanning an in-memory MockDataset. routing/route_search.py itself is
 untouched; this is an additive module, not a replacement.
 
 Every Leg/Transfer object this module resolves from the warehouse is written
@@ -145,7 +145,7 @@ def find_candidate_routes(
     legs_by_id: dict[str, Leg],
     transfers_by_id: dict[str, Transfer],
 ) -> list[Route]:
-    """DuckDB-backed sibling of pipelines.route_search.find_candidate_routes.
+    """DuckDB-backed sibling of routing.route_search.find_candidate_routes.
 
     legs_by_id/transfers_by_id are mutated in place with every Leg/Transfer
     object this call resolves, so engine.py can look any of them up by id

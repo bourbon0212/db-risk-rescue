@@ -33,13 +33,15 @@ pipelines/
   id_crosswalk.py         # GTFS stop_id <-> station_id mapping for the scoped corridor
   gtfs_scope.py           # DB-agency/corridor/line-type feed scoping — scope_gtfs_feed()
                           # (single service_date, §7) and scope_gtfs_feed_multi_day() (§6)
-  route_search.py         # in-memory candidate Route generation over a loaded MockDataset (§5)
-  route_search_duckdb.py  # DuckDB-backed candidate Route generation, calendar-aware (§5, §6)
-  route_filters.py        # Sanity Filter — prunes detour routes post-search (SPEC.md §3.7)
   build_dataset.py        # Snapshot orchestrator -> data/real_dataset.json
   build_warehouse.py      # Warehouse orchestrator -> data/warehouse.duckdb (§6)
   warehouse_writer.py     # DuckDB DDL + write logic (§6)
   download_raw_data.py    # fetches GTFS.DE zip(s) + piebro monthly Parquet into data/raw/
+routing/                  # query-time, not build-time: imported by app.py and engine.py
+                          # on every search, and by none of the pipelines above
+  route_search.py         # in-memory candidate Route generation over a loaded MockDataset (§5)
+  route_search_duckdb.py  # DuckDB-backed candidate Route generation, calendar-aware (§5, §6)
+  route_filters.py        # Sanity Filter — prunes detour routes post-search (SPEC.md §3.7)
 db.py                     # DuckDB connection helper, mirrors data_loader.py (§7)
 data_loader.py            # loads mock_data.json / real_dataset.json into MockDataset (§7)
 data/                     # every dataset lives here -- nothing data-shaped at the root

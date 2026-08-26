@@ -60,10 +60,10 @@ python -m pytest
 
 ```
 GTFS.DE timetable ─┐
-                   ├─► pipelines/ ─► Pydantic contract ─► engine.py ─► ui_components.py
-piebro delay data ─┘   (ingest,       (Station, Leg,      (Monte Carlo   (route cards,
-                        crosswalk,     Transfer, Route)    simulation)    risk colours)
-                        aggregate)
+                   ├─► pipelines/ ─► Pydantic contract ─► routing/ ─► engine.py ─► ui_components.py
+piebro delay data ─┘   (ingest,      (Station, Leg,       (routes)    (Monte Carlo (route cards,
+                       crosswalk,    Transfer, Route)                 simulation)  risk colours)
+                       aggregate)
 ```
 
 The **Pydantic contract** in `models.py` is the load-bearing idea. Everything upstream of it exists to produce those five object types; everything downstream consumes them and neither knows nor cares which backend produced them. That boundary is why the storage layer could be swapped from JSON files to a DuckDB warehouse without the simulation engine changing at all.
@@ -103,7 +103,8 @@ data_loader.py      Loads the JSON backends (Mock, Snapshot)
 db.py               DuckDB connection helper for the Warehouse backend
 pytest.ini          Puts the repo root on sys.path so tests/ can import the above
 
-pipelines/          Ingestion, delay aggregation, route search, warehouse build
+pipelines/          Offline ingestion, delay aggregation, warehouse build (python -m)
+routing/            Candidate route search and filtering, on every request
 tests/              The pytest suite
 
 data/

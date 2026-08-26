@@ -1,4 +1,4 @@
-"""Tests for pipelines/route_search.py (DATA_SPEC.md §5, §8 build sequence
+"""Tests for routing/route_search.py (DATA_SPEC.md §5, §8 build sequence
 step 6, extended to 2 transfers): direct legs, single- and two-transfer
 journeys, the departure-time cutoff, and the still-excluded 3+-transfer case.
 """
@@ -9,7 +9,7 @@ import pytest
 
 from data_loader import load_dataset
 from models import Leg, MockDataset, Station, Transfer
-from pipelines.route_search import find_candidate_routes
+from routing.route_search import find_candidate_routes
 
 EARLY = datetime(2026, 8, 23, 0, 0, 0)
 

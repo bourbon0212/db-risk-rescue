@@ -484,7 +484,7 @@ def derive_transfer_templates(
     computed once regardless of how many calendar days the templates cover.
     Whether a given TransferTemplate is actually usable on a specific query
     date (i.e. both trips' service_ids are active that day) is resolved at
-    route-search time (pipelines/route_search_duckdb.py), not here.
+    route-search time (routing/route_search_duckdb.py), not here.
     """
     arrivals_by_station: dict[str, list[LegTemplate]] = defaultdict(list)
     departures_by_station: dict[str, list[LegTemplate]] = defaultdict(list)

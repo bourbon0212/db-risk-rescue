@@ -1,4 +1,4 @@
-"""Tests for pipelines/route_filters.py (SPEC.md §3.7): the Sanity Filter
+"""Tests for routing/route_filters.py (SPEC.md §3.7): the Sanity Filter
 that prunes mathematically-valid-but-practically-absurd detour routes from a
 top-level search result before display/simulation.
 """
@@ -6,7 +6,7 @@ top-level search result before display/simulation.
 from datetime import datetime, timedelta
 
 from models import Route
-from pipelines.route_filters import (
+from routing.route_filters import (
     DEFAULT_MAX_ADDITIONAL_MINUTES,
     DEFAULT_MAX_DURATION_RATIO,
     apply_sanity_filter,

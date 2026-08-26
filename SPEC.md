@@ -159,7 +159,7 @@ Scope: one level of re-routing. A miss *within* a fallback route resolves via he
 - `simulate_route`'s per-iteration sampling never touches a database either way.
 - Verified end-to-end by `test_route_search_duckdb.py`.
 
-For the JSON backend, `precompute_fallback_plans` also accepts prebuilt `search_indexes` (`pipelines.route_search.build_route_search_indexes`), reused across the top-level search and every fallback sub-search instead of rebuilding lookup tables from scratch each time — same O(1)-per-call-count discipline, applied to index cost instead of query count.
+For the JSON backend, `precompute_fallback_plans` also accepts prebuilt `search_indexes` (`routing.route_search.build_route_search_indexes`), reused across the top-level search and every fallback sub-search instead of rebuilding lookup tables from scratch each time — same O(1)-per-call-count discipline, applied to index cost instead of query count.
 
 ### 3.6 Minimum Connection Time (MCT) & the Gradient Risk Floor
 
@@ -209,7 +209,7 @@ UI wording for MCT-affected transfers: `UIUX_SPEC.md` §2 — this section cover
 
 Route search finds every mathematically valid path with no notion of whether it's a *sane* choice — surfacing multi-hour detours (e.g. a 6h51m 2-transfer Köln→Frankfurt via Hannover) alongside a 90-minute direct train, wasting Monte Carlo compute on routes no one would take.
 
-`pipelines.route_filters.apply_sanity_filter(routes, max_duration_ratio, max_additional_minutes)` (values: §6) drops any candidate whose scheduled duration exceeds the *tighter* of two bounds against the *fastest* duration in that search result — a ratio bound and a flat-minutes bound, both relative to what was actually found. Applied once to the top-level result, before display-limit slicing (§5.1) and before simulation.
+`routing.route_filters.apply_sanity_filter(routes, max_duration_ratio, max_additional_minutes)` (values: §6) drops any candidate whose scheduled duration exceeds the *tighter* of two bounds against the *fastest* duration in that search result — a ratio bound and a flat-minutes bound, both relative to what was actually found. Applied once to the top-level result, before display-limit slicing (§5.1) and before simulation.
 
 **Why two bounds and not one.** *(Background — the evidence behind §6's two values. Skip unless you're retuning them.)* A pure ratio shipped first, then a sweep over every connected station pair showed why it isn't enough. Detour explosion is overwhelmingly a *short*-trip problem: pairs whose fastest route is under 60 min had a median worst-case ratio of 15.2x and reached 458x, while pairs over 240 min stayed tame (median 1.4x, none even reaching 2.5x) because the 2-transfer cap and real corridor connectivity bound how convoluted a long route can get.
 
