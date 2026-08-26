@@ -6,7 +6,7 @@ Standard journey planners show you a scheduled arrival. This one runs a Monte Ca
 
 Built on offline GTFS.DE timetable data and the [piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data) historical delay archive. No live API calls.
 
-![The app showing a Frankfurt to Köln search: a "Plan your trip" panel above ranked route cards, each with scheduled times, an Expected and Safest predicted arrival, and a coloured left edge indicating overall route risk.](design/screenshot.png)
+![The app showing a Frankfurt to Köln search: a "Plan your trip" panel above ranked route cards, each with scheduled times, an Expected and Safest predicted arrival, and a coloured left edge indicating overall route risk.](assets/screenshot.png)
 
 *Each card carries two predictions — **Expected** (typical) and **Safest** (the 85th percentile) — plus a coloured left edge summarising the route's overall risk. The three direct trains are green; the one-transfer route at the bottom is red because its Safest arrival lands 63 minutes past schedule.*
 
@@ -36,7 +36,7 @@ The sidebar has a **Data source** selector with three backends. Two work immedia
 | **Snapshot** | Yes | Real GTFS + delay data for a 33-station corridor, baked to one fixed date. |
 | **Warehouse** | **No — needs building** | The same corridor, queryable for *any* date in a month-long window. The default selection. |
 
-> **Heads-up on your first run.** Warehouse is selected by default but its database file is a build artifact and isn't in the repo. If it's missing the app shows a sidebar warning and quietly falls back to Mock — so if the network looks suspiciously tiny, that's why. Switch to **Snapshot** for real data with no build required.
+> **Heads-up on your first run.** Warehouse is selected by default, but its database file is a build artifact and isn't in the repo. When it's missing the app says so in the sidebar and drops to **Snapshot** — still real data, just pinned to one date. Build the warehouse when you want to search other dates.
 
 To build the Warehouse backend yourself (downloads a few hundred MB of raw feeds):
 
@@ -96,8 +96,8 @@ And one wart: the Pydantic class holding a loaded dataset is called **`MockDatas
 ## Project layout
 
 The root holds the application modules, the docs, and two config files —
-nothing else. Datasets live in `data/`, tests in `tests/`, visual reference
-material in `design/`.
+nothing else. Datasets live in `data/`, tests in `tests/`, the design reference
+in `design/`, and README imagery in `assets/`.
 
 ```
 app.py              Streamlit entry point — search flow, caching, pagination
@@ -123,6 +123,8 @@ data/
 
 design/
   design_mock.html   The reference mockup UIUX_SPEC.md's visual system came from
+
+assets/
   screenshot.png     The screenshot at the top of this README
 
 .streamlit/

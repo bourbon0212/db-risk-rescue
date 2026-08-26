@@ -56,12 +56,23 @@ with st.sidebar:
 use_warehouse = data_source_label == LABEL_WAREHOUSE
 
 if use_warehouse and not db.WAREHOUSE_PATH.exists():
-    st.sidebar.warning(
-        "data/warehouse.duckdb not found — run `python -m pipelines.build_warehouse` "
-        "first. Falling back to data/mock_data.json for now."
-    )
+    # Degrade to the best backend that's actually present, not straight to the
+    # smallest one: data/real_dataset.json is committed, so on a fresh clone or
+    # a Cloud deploy Snapshot is real data and Mock is an 11-station fixture
+    # (SPEC.md §4.2).
+    if REAL_DATA_PATH.exists():
+        data_source_label = LABEL_SNAPSHOT
+        st.sidebar.warning(
+            "data/warehouse.duckdb not found — showing **Snapshot** (real data, one "
+            "fixed date). Run `python -m pipelines.build_warehouse` to search any date."
+        )
+    else:
+        data_source_label = LABEL_MOCK
+        st.sidebar.warning(
+            "data/warehouse.duckdb not found — run `python -m pipelines.build_warehouse` "
+            "first. Falling back to data/mock_data.json for now."
+        )
     use_warehouse = False
-    data_source_label = LABEL_MOCK
 
 if not use_warehouse:
     data_source_path = JSON_DATA_SOURCES[data_source_label]
