@@ -1,20 +1,11 @@
 """GTFS temporal vocabulary shared by `pipelines/` and `routing/`.
 
-Leg times are stored date-agnostically -- as seconds since midnight of the
-nominal service day (`DATA_SPEC.md` §3 step 5, §6) -- so that one warehouse row
-serves every date its calendar is active for. *Encoding* that form is an
-ingestion job (`pipelines/gtfs_ingest.py`) and *decoding* it is a query job
-(`routing/route_search_duckdb.py`), which left the pair with no natural owner:
-before this module they lived in the ingest layer, and the query layer reached
-across packages for a private name to get at them.
+Leg times are stored as seconds since midnight of the nominal service day, so
+encoding them is an ingestion job and decoding them a query job: neither
+package owns the representation and both must agree on it. Why that lands in a
+module of its own: `DATA_SPEC.md` §2. The storage contract itself: §3 step 5.
 
-Neither side owns these, and both must agree on them, so they live here.
-Same reasoning for `WEEKDAY_COLUMNS`, which was previously declared twice --
-once in `calendar_ingest.py` (which never used it) and again, privately, in
-`gtfs_scope.py`.
-
-Deliberately a leaf: stdlib only, no first-party imports, so any module in any
-package can depend on it without a cycle.
+Deliberately a leaf -- stdlib only, no first-party imports.
 """
 
 from datetime import date, datetime, timedelta

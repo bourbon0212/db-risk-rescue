@@ -14,9 +14,9 @@ __pycache__/
 # secrets) stays tracked.
 .streamlit/secrets.toml
 
-# Phase 2 raw data downloads (pipelines/download_raw_data.py) -- large,
-# regenerable, not meant to live in git. data/real_dataset.json (the
-# pipeline's OUTPUT) is deliberately NOT excluded here.
+# Raw upstream downloads (pipelines/download_raw_data.py) -- large,
+# regenerable, not meant to live in git. data/real_dataset.json (the Snapshot
+# backend's OUTPUT) is deliberately NOT excluded here.
 data/raw/
 *.parquet
 *.zip
@@ -27,10 +27,10 @@ data/raw/
 !data/fixtures/**/*.zip
 !data/fixtures/**/*.parquet
 
-# Phase 3 DuckDB warehouse (pipelines/build_warehouse.py) -- regenerable
-# build output, like data/raw/ above. Unlike real_dataset.json, this one IS
-# excluded: it's a binary database file (not a diffable JSON snapshot) that
-# would just bloat the repo on every rebuild.
+# The Warehouse backend's database (pipelines/build_warehouse.py) --
+# regenerable build output, like data/raw/ above. Unlike
+# data/real_dataset.json, this one IS excluded: it's a binary database file
+# (not a diffable JSON snapshot) that would bloat the repo on every rebuild.
 *.duckdb
 
 # OS, editor, and IDE droppings. None are present today -- these are

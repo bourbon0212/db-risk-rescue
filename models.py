@@ -78,7 +78,11 @@ class Route(BaseModel):
 
 
 class MockDataset(BaseModel):
-    """Top-level container matching the structure of mock_data.json."""
+    """Every Station/Line/Leg/Transfer/Route a backend produced, in one object.
+
+    All three backends produce one of these, despite the name -- it dates from
+    Phase 1, when the Mock fixture was the only source (`SPEC.md` §2, §4.2).
+    """
 
     stations: list[Station]
     lines: list[Line]

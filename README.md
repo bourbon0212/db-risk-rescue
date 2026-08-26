@@ -72,7 +72,7 @@ The **Pydantic contract** in `models.py` is the load-bearing idea. Everything up
 
 ## Where to read next
 
-Four specs, each owning one thing. Pick by what you're changing:
+Three specs, each owning one thing. Pick by what you're changing:
 
 | I want to… | Read | Start at |
 |---|---|---|
@@ -85,14 +85,19 @@ Four specs, each owning one thing. Pick by what you're changing:
 
 `CLAUDE.md` is configuration for AI coding agents, not human documentation — you can skip it.
 
-**One naming convention worth knowing up front:** *Mock / Snapshot / Warehouse* are the three backends you can select at runtime. *Phase 1 / 2 / 3* are the project's development stages, which happen to have produced those backends in that order. The specs use both, deliberately — `SPEC.md` §4.2 maps between them.
+**Two naming conventions worth knowing up front.**
+
+*Mock / Snapshot / Warehouse* are the three backends you can select at runtime. *Phase 1 / 2 / 3* are the project's development stages, which happen to have produced those backends in that order. The specs use both, deliberately — `SPEC.md` §4.2 maps between them.
+
+And one wart: the Pydantic class holding a loaded dataset is called **`MockDataset`**, but it is not the Mock backend — all three backends produce one. The name dates from Phase 1, when the Mock fixture was the only source.
 
 ---
 
 ## Project layout
 
-Everything at the root is either an application module or a doc. Datasets live
-in `data/`, tests in `tests/`, visual reference material in `design/`.
+The root holds the application modules, the docs, and two config files —
+nothing else. Datasets live in `data/`, tests in `tests/`, visual reference
+material in `design/`.
 
 ```
 app.py              Streamlit entry point — search flow, caching, pagination
@@ -103,6 +108,7 @@ data_loader.py      Loads the JSON backends (Mock, Snapshot)
 db.py               DuckDB connection helper for the Warehouse backend
 gtfs_time.py        GTFS time/calendar helpers shared by pipelines/ and routing/
 pytest.ini          Puts the repo root on sys.path so tests/ can import the above
+requirements.txt    Pinned dependencies
 
 pipelines/          Offline ingestion, delay aggregation, warehouse build (python -m)
 routing/            Candidate route search and filtering, on every request
@@ -118,11 +124,15 @@ data/
 design/
   design_mock.html   The reference mockup UIUX_SPEC.md's visual system came from
   screenshot.png     The screenshot at the top of this README
+
+.streamlit/
+  config.toml        Native Streamlit widget theme (UIUX_SPEC.md §3 owns the values)
 ```
 
 The three files at the top of `data/` are the three backends the sidebar radio
 switches between (`SPEC.md` §4.2). Only the first two are in git — see
 "Missing-data degradation" in `SPEC.md` §4.2 for what happens on a fresh clone.
 
-The four specs (`SPEC.md`, `DATA_SPEC.md`, `UIUX_SPEC.md`, plus `CLAUDE.md`)
-stay at the root next to this README, where they're easiest to find.
+The three specs (`SPEC.md`, `DATA_SPEC.md`, `UIUX_SPEC.md`) stay at the root
+next to this README, where they're easiest to find, as does `CLAUDE.md` —
+which is agent configuration rather than a spec.

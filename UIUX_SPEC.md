@@ -90,7 +90,7 @@ CSS custom properties in the reference mockup, lifted verbatim into `ui_componen
 | `--page-bg` | `#f2f3f5` | App background |
 | `--db-red` | `#eb0016` | Brand accent only (header banner) — never risk signaling, to stay visually distinct from the High-risk band |
 
-These tokens theme the custom-rendered cards. Streamlit's own native widget chrome — selectbox focus rings, default buttons, sliders — sits outside `inject_global_styles()`'s reach, so `.streamlit/config.toml` themes it separately with matching values: `primaryColor = "#EB0016"` (`--db-red`), `backgroundColor = "#F2F3F5"` (`--page-bg`), `secondaryBackgroundColor = "#F1F3F5"`, `textColor = "#212529"`. Keep the two in sync when changing either.
+These tokens theme the custom-rendered cards. Streamlit's own native widget chrome — selectbox focus rings, default buttons, sliders — sits outside `inject_global_styles()`'s reach, so `.streamlit/config.toml` themes it separately with matching values: `primaryColor = "#EB0016"` (`--db-red`), `backgroundColor = "#F2F3F5"` (`--page-bg`), `secondaryBackgroundColor = "#F1F3F5"`, `textColor = "#212529"`, `font = "sans serif"`. Keep the two in sync when changing either.
 
 ### 3.2 Train category chips
 

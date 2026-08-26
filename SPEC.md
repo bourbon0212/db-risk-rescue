@@ -22,6 +22,8 @@ Four layers, each with its own section:
 
 `models.py`'s Pydantic contract is the *only* interface `engine.py` and `ui_components.py` consume. All storage backends (§4) produce these exact objects at query time.
 
+The five types below travel together in a `MockDataset` — the whole-dataset container `data_loader.py` returns and `routing/route_search.py` searches over. **Despite the name, it is not the Mock backend**: all three backends produce one. The name dates from Phase 1, when the Mock fixture was the only source.
+
 ### 2.1 Station
 
 ```json
@@ -157,7 +159,7 @@ Scope: one level of re-routing. A miss *within* a fallback route resolves via he
 
 - §3.4's O(1) guarantee survives the swap, because it depends on *how many times* the search is called — bounded by (candidate routes × transfers per route), independent of N — not on what answers it. A DuckDB query is slower than a list scan, but it runs the same number of times.
 - `simulate_route`'s per-iteration sampling never touches a database either way.
-- Verified end-to-end by `test_route_search_duckdb.py`.
+- Verified end-to-end by `tests/test_route_search_duckdb.py`.
 
 For the JSON backend, `precompute_fallback_plans` also accepts prebuilt `search_indexes` (`routing.route_search.build_route_search_indexes`), reused across the top-level search and every fallback sub-search instead of rebuilding lookup tables from scratch each time — same O(1)-per-call-count discipline, applied to index cost instead of query count.
 
@@ -171,7 +173,7 @@ Every Station carries `mct_minutes` (§2.1), assigned at ingestion by `pipelines
 
 - Count leg endpoints (origin or destination) touching each station — a stand-in for interchange complexity in the absence of platform geometry.
 - Stations at/above the 75th percentile of that distribution: **major hub**, `mct_minutes` = §6's hub value.
-- Everyone else: `mct_minutes` = §6's standard value (also the Station default, e.g. `mock_data.json`).
+- Everyone else: `mct_minutes` = §6's standard value (also the Station default, e.g. `data/mock_data.json`).
 
 A proposal to lower these thresholds was rejected: the touch-count classifier is already only a proxy, so shrinking the threshold discards the one signal it has without fixing the actual problem — which §3.6.2 addresses instead.
 
@@ -250,7 +252,7 @@ The original combined cache was keyed on `display_limit` (§5.1's pagination win
 - Arguments that aren't part of cache identity (`_route`, `_search_indexes`, etc.) use a leading underscore so Streamlit excludes them from the hash.
 - `app.py` times both stages with `time.perf_counter()`, printed to terminal.
 
-Measured (warehouse backend, real corridor): ~1.3s to 20 loaded routes, then ~0.9s per further "Load more" — flat per-click cost.
+Measured (Warehouse backend, real corridor): ~1.3s to 20 loaded routes, then ~0.9s per further "Load more" — flat per-click cost.
 
 ## 5. Streamlit UI Specification
 
@@ -335,15 +337,15 @@ Every hardcoded constant in the app, in one place. If a value changes, update it
 
 | Phase | Shipped | Backend (§4.2) | Dataset |
 |---|---|---|---|
-| 1 — Mock prototype | Pydantic contract, MC engine, Streamlit UI | Mock | `mock_data.json`, hand-authored |
+| 1 — Mock prototype | Pydantic contract, MC engine, Streamlit UI | Mock | `data/mock_data.json`, hand-authored |
 | 2 — Real pipeline | GTFS.DE + piebro ingestion, 33-station corridor, 2-transfer search | Snapshot | `data/real_dataset.json`, one fixed date |
 | 3 — DuckDB warehouse | Date-agnostic templates + dynamic calendar resolution | Warehouse | `data/warehouse.duckdb`, full month window |
-| 3.1 — Corridor & query hardening | Corridor-aware leg fix, N+1 query fix, cache/pagination split | Varies per fix (below) | Same warehouse (+ Snapshot's `real_dataset.json`, rebuilt) |
+| 3.1 — Corridor & query hardening | Corridor-aware leg fix, N+1 query fix, cache/pagination split | Varies per fix (below) | Same warehouse (+ Snapshot's `data/real_dataset.json`, rebuilt) |
 | 3.2 — MCT & platform capture | Station-tier MCT + gradient floor, platform capture | All three | Engine + UI wording addition |
 
-**Phase 1.** Built the mock dataset, engine, and UI together — the baseline the Pydantic contract and MC algorithm were designed against. Phases 2 and 3 swapped the storage layer beneath that contract without changing it; the only later engine change was Phase 3.2's MCT floor.
+**Phase 1.** Built the Mock dataset, engine, and UI together — the baseline the Pydantic contract and MC algorithm were designed against. Phases 2 and 3 swapped the storage layer beneath that contract without changing it; the only later engine change was Phase 3.2's MCT floor.
 
-**Phase 2.** Replaced the mock timetable with real GTFS.DE ingestion + piebro historical delay bucketing, an ID crosswalk expanding to the 33-station corridor, and search extended to 2 transfers. Output: one Pydantic-validated snapshot per build.
+**Phase 2.** Replaced the Mock timetable with real GTFS.DE ingestion + piebro historical delay bucketing, an ID crosswalk expanding to the 33-station corridor, and search extended to 2 transfers. Output: one Pydantic-validated snapshot per build.
 
 **Phase 3.** Migrated storage to a DuckDB warehouse of date-agnostic templates + GTFS calendar data, so any date in the ingested window is queryable at query time instead of baked in at build time — MC hot loop and O(1) fallback cache untouched. Added the UI date picker and a third data source. A full month (2026-08-22 .. 2026-09-21) ingests into a single warehouse file; different dates genuinely surface different route topologies. (Its size grew to ~55MB in Phase 3.1 when the corridor-aware leg fix roughly doubled the leg count — see `DATA_SPEC.md` §6.1.)
 

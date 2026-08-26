@@ -20,7 +20,14 @@ No pipeline changes this signature or the Pydantic models — only which JSON fi
 
 Offline-only: fixture files and periodically-downloaded GTFS.DE/piebro archives — never live HAFAS polling or scraping.
 
-## 2. Repository & Component Layout
+## 2. Component Layout
+
+The data-path components and what each owns. `README.md` carries the full
+repository tree (including the app layer, `tests/` and `design/`); this one
+annotates only what this spec governs.
+
+Throughout this doc a bare module name means `pipelines/`; anything living
+elsewhere is written with its path.
 
 ```
 pipelines/
@@ -46,7 +53,8 @@ gtfs_time.py              # seconds-since-midnight <-> datetime, plus calendar.t
                           # weekday columns -- the vocabulary pipelines/ writes and
                           # routing/ reads, owned by neither (§3 step 5, §6)
 db.py                     # DuckDB connection helper, mirrors data_loader.py (§7)
-data_loader.py            # loads mock_data.json / real_dataset.json into MockDataset (§7)
+data_loader.py            # loads data/mock_data.json or data/real_dataset.json into a
+                          # MockDataset -- the container, not the Mock backend (§7)
 data/                     # every dataset lives here -- nothing data-shaped at the root
   mock_data.json          # Mock backend, hand-authored (committed)
   real_dataset.json       # Snapshot pipeline output (committed)
@@ -55,6 +63,19 @@ data/                     # every dataset lives here -- nothing data-shaped at t
   fixtures/               # small hand-built GTFS feeds (demo pipeline + tests)
   raw/                    # downloaded GTFS + piebro snapshots (gitignored)
 ```
+
+**The build/query split.** `pipelines/` runs offline via `python -m`; `routing/`
+runs inside a request, imported by `app.py` and `engine.py`. Nothing in
+`pipelines/` imports `routing/`, which is what keeps the ingestion layer out of
+the hot path.
+
+`gtfs_time.py` exists because of that split. Leg times are stored date-agnostically
+(§3 step 5), so *encoding* that form is an ingestion job and *decoding* it is a
+query job — the representation belongs to neither package, but both must agree on
+it exactly or legs come back with silently wrong times. It is a leaf module
+(stdlib only) so either side can depend on it without a cycle. `WEEKDAY_COLUMNS`
+lives there for the same reason: `gtfs_scope.py` and `routing/route_search_duckdb.py`
+both index `calendar.txt`'s columns by `date.weekday()`.
 
 ## 3. GTFS Topology Ingestion Pipeline
 
@@ -118,7 +139,7 @@ The archive's columns don't mean what their names suggest. Both findings below w
 
 ## 5. Route Search & Candidate Generation
 
-`app.py` doesn't filter a curated list — `route_search.py` (§7) and `route_search_duckdb.py` (§6) generate candidate `Route` objects on demand from `(origin, destination, departure_time)`, plus `service_date` for the DuckDB backend. Same shape both ways:
+`app.py` doesn't filter a curated list — `routing/route_search.py` (§7) and `routing/route_search_duckdb.py` (§6) generate candidate `Route` objects on demand from `(origin, destination, departure_time)`, plus `service_date` for the DuckDB backend. Same shape both ways:
 
 - Direct legs, departing at or after the requested time.
 - Single-transfer: leg A, a transfer within the window, leg B.
@@ -128,8 +149,8 @@ Not in scope: 3+ transfers, full graph pathfinding, or recursive re-routing beyo
 
 Both backends track visited stations while extending a candidate and stop as soon as a leg reaches the destination, guaranteeing every returned `Route` is a simple path — no station repeats, and nothing that leaves the destination only to return to it later (e.g. Reutlingen → Stuttgart → Heidelberg → Stuttgart instead of the direct Reutlingen → Stuttgart leg).
 
-- `route_search.py::find_candidate_routes(dataset, ...)` — in-memory, backs §7.
-- `route_search_duckdb.py::find_candidate_routes(conn, ..., service_date, legs_by_id, transfers_by_id)` — one small SQL query per step, scoped to origin + active `service_id`s (§6.3); resolved objects written into caller-supplied dicts in place, so only what's actually touched loads into memory. Backs §6.
+- `routing/route_search.py::find_candidate_routes(dataset, ...)` — in-memory, backs §7.
+- `routing/route_search_duckdb.py::find_candidate_routes(conn, ..., service_date, legs_by_id, transfers_by_id)` — one small SQL query per step, scoped to origin + active `service_id`s (§6.3); resolved objects written into caller-supplied dicts in place, so only what's actually touched loads into memory. Backs §6.
 
 ## 6. DuckDB Warehouse Schema
 
@@ -194,7 +215,7 @@ def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:
     return MockDataset.model_validate(json.loads(path.read_text()))
 ```
 
-`app.py`'s sidebar radio picks which path `get_dataset()` loads. `mock_data.json` and its test coverage stay untouched by every downstream pipeline change.
+`app.py`'s sidebar radio picks which path `get_dataset()` loads. `data/mock_data.json` and its test coverage stay untouched by every downstream pipeline change.
 
 **Building `data/real_dataset.json`:** `build_dataset.py` is a one-off/periodic script, not invoked at request time. Mirroring §6.4's warehouse path, it scopes *both* downloaded feeds (fv + rv) to one `service_date` (§3 step 2), ingests each via the corridor-aware anchored parser (§3.2), dedupes cross-feed duplicate lines and legs, crosswalks station ids, joins delay distributions (§4), and writes a validated `MockDataset`. Leg dedup must run before `derive_transfers` — deduping afterward would leave transfers pointing at a discarded twin's `leg_id`.
 
@@ -209,12 +230,12 @@ def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:
 3. `delay_aggregation.py`: bucket + normalize + fallback, tested against a synthetic delay DataFrame.
 4. `id_crosswalk.py`: `stop_id` ↔ station identifier mapping.
 5. `build_dataset.py`: wires 1–4, `MockDataset.model_validate()`, writes `data/real_dataset.json`.
-6. `route_search.py` + `app.py` sidebar toggle: smoke-tested against the real dataset alongside mock.
+6. `routing/route_search.py` + `app.py` sidebar toggle: smoke-tested against the Snapshot dataset alongside Mock.
 
 **Phase 3** (added once Phase 2 was stable):
 
 7. `calendar_ingest.py` + date-agnostic `parse_trips`/`parse_leg_templates`/`derive_transfer_templates`, tested for parity against the anchored parsers on the same fixture.
-8. `warehouse_writer.py` + `build_warehouse.py`: wires GTFS + calendar + delay pipeline into `data/warehouse.duckdb`; `route_search_duckdb.py` + date picker, smoke-tested alongside Phase 1/2.
+8. `warehouse_writer.py` + `build_warehouse.py`: wires GTFS + calendar + delay pipeline into `data/warehouse.duckdb`; `routing/route_search_duckdb.py` + date picker, smoke-tested alongside Phase 1/2.
 
 Nothing in `models.py`, `engine.py`, `ui_components.py`, or Phase 1/2 tests needed to change at either step. Full phase narrative/rationale: `SPEC.md` §7.
 

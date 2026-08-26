@@ -5,17 +5,12 @@ Mock/Snapshot in-memory find_candidate_routes() -- direct, single-transfer, and
 two-transfer journeys, sorted by scheduled_departure -- but every step's
 candidate set comes from a small, origin/date-scoped DuckDB query against
 the warehouse's date-agnostic leg_templates/transfer_templates instead of
-scanning an in-memory MockDataset. routing/route_search.py itself is
-untouched; this is an additive module, not a replacement.
+scanning an in-memory MockDataset.
 
-Every Leg/Transfer object this module resolves from the warehouse is written
-into the caller-supplied legs_by_id/transfers_by_id dicts (mutated in
-place). That's what lets engine.py's simulate_route()/precompute_fallback_
-plans() -- which look legs/transfers up by id from those same dicts,
-unchanged -- work without ever loading the whole network into memory: the
-dicts only ever contain whatever this module has actually touched across
-however many searches (the top-level search plus each transfer's fallback
-search) happened during one app.py request.
+Resolved Leg/Transfer objects are written into the caller's
+legs_by_id/transfers_by_id dicts as a side effect -- the mechanism that keeps
+engine.py working without ever loading the whole network into memory
+(`DATA_SPEC.md` §6.3 step 4, `SPEC.md` §3.5).
 """
 
 from collections import defaultdict

@@ -11,7 +11,7 @@ You are an expert Python Developer and Data Scientist implementing the DB Delay 
 - Python 3.11+
 - Streamlit (UI)
 - Pydantic (data validation — the Station/Line/Leg/Transfer/Route contract `engine.py` and `ui_components.py` consume, regardless of which backend produced the data)
-- DuckDB (Phase 3 warehouse: date-agnostic topology + dynamic calendar filtering — see `DATA_SPEC.md` §6)
+- DuckDB (the Warehouse backend, added in Phase 3: date-agnostic topology + dynamic calendar filtering — see `DATA_SPEC.md` §6)
 - pandas / pyarrow (GTFS + historical delay Parquet ingestion pipelines)
 - pytest (unit testing)
 
