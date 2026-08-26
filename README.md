@@ -6,7 +6,7 @@ Standard journey planners show you a scheduled arrival. This one runs a Monte Ca
 
 Built on offline GTFS.DE timetable data and the [piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data) historical delay archive. No live API calls.
 
-![The app showing a Frankfurt to Köln search: a "Plan your trip" panel above ranked route cards, each with scheduled times, an Expected and Safest predicted arrival, and a coloured left edge indicating overall route risk.](assets/screenshot.png)
+![The app showing a Frankfurt to Köln search: a "Plan your trip" panel above ranked route cards, each with scheduled times, an Expected and Safest predicted arrival, and a coloured left edge indicating overall route risk.](design/screenshot.png)
 
 *Each card carries two predictions — **Expected** (typical) and **Safest** (the 85th percentile) — plus a coloured left edge summarising the route's overall risk. The three direct trains are green; the one-transfer route at the bottom is red because its Safest arrival lands 63 minutes past schedule.*
 
@@ -91,7 +91,8 @@ Four specs, each owning one thing. Pick by what you're changing:
 
 ## Project layout
 
-One rule: **every dataset lives under `data/`, all Python lives at the root or in `pipelines/`.**
+Everything at the root is either an application module or a doc. Datasets live
+in `data/`, tests in `tests/`, visual reference material in `design/`.
 
 ```
 app.py              Streamlit entry point — search flow, caching, pagination
@@ -100,8 +101,10 @@ models.py           The Pydantic contract everything is built around
 ui_components.py    Route cards, risk colours, the expanded itinerary
 data_loader.py      Loads the JSON backends (Mock, Snapshot)
 db.py               DuckDB connection helper for the Warehouse backend
+pytest.ini          Puts the repo root on sys.path so tests/ can import the above
+
 pipelines/          Ingestion, delay aggregation, route search, warehouse build
-tests/              pytest suite; conftest.py at the root puts imports on sys.path
+tests/              The pytest suite
 
 data/
   mock_data.json     Mock backend — hand-authored, committed
@@ -109,8 +112,15 @@ data/
   warehouse.duckdb   Warehouse backend — pipeline output, gitignored
   fixtures/          Small GTFS feeds for the demo pipeline and the test suite
   raw/               Downloaded GTFS.DE / piebro archives, gitignored
+
+design/
+  design_mock.html   The reference mockup UIUX_SPEC.md's visual system came from
+  screenshot.png     The screenshot at the top of this README
 ```
 
 The three files at the top of `data/` are the three backends the sidebar radio
 switches between (`SPEC.md` §4.2). Only the first two are in git — see
 "Missing-data degradation" in `SPEC.md` §4.2 for what happens on a fresh clone.
+
+The four specs (`SPEC.md`, `DATA_SPEC.md`, `UIUX_SPEC.md`, plus `CLAUDE.md`)
+stay at the root next to this README, where they're easiest to find.

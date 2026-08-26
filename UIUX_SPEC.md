@@ -4,7 +4,7 @@
 
 If you only read one section, make it **§2**: the five-state risk system is where most UI decisions actually get made, and its mapping table is the single source of truth for which phrase, colour and figure a transfer displays. §3 holds the design tokens, §4 the component structure. New to the project? Start with [README.md](README.md).
 
-This doc names engine-produced values but never computes them — thresholds and maths belong to `SPEC.md` (§6 for constants). `design_mock.html` is the reference mockup the visual system was built from.
+This doc names engine-produced values but never computes them — thresholds and maths belong to `SPEC.md` (§6 for constants). `design/design_mock.html` is the reference mockup the visual system was built from.
 
 **Section map:** §1 Design Philosophy & Principles · §2 The Five-State Risk System · §3 Color Palette & Design Tokens · §4 Component Architecture · §5 Technical Implementation Notes · §6 Design History Log.
 **Status:** Implemented in `ui_components.py`; §5.4 confirms parity against the running code.
