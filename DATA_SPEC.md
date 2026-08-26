@@ -4,10 +4,10 @@
 
 The quickest orientation is §2's component layout, then §3 (how a timetable becomes legs and transfers) and §4 (how delay history becomes probability distributions). §6 is the warehouse schema. New to the project? Start with [README.md](README.md).
 
-Two ground rules hold throughout. **Offline only** — committed fixtures and periodically-downloaded archives, never live polling or reverse-engineered APIs. And **the Pydantic contract is non-negotiable**: every pipeline here must produce output that validates against `models.py` as it stands. If a pipeline's output doesn't fit, the pipeline is wrong, not the model — any genuine gap gets raised in §10 rather than patched around.
+Two ground rules hold throughout. **Offline only** — committed fixtures and periodically-downloaded archives, never live polling or reverse-engineered APIs (§8.3's startup download of a pre-built database is not an exception; see §1). And **the Pydantic contract is non-negotiable**: every pipeline here must produce output that validates against `models.py` as it stands. If a pipeline's output doesn't fit, the pipeline is wrong, not the model — any genuine gap gets raised in §10 rather than patched around.
 
-**Section map:** §1 Guiding Constraints & Scope · §2 Repository & Component Layout · §3 GTFS Topology Ingestion Pipeline · §4 Delay Distribution Pipeline · §5 Route Search & Candidate Generation · §6 DuckDB Warehouse Schema · §7 JSON Backends & Data Access Layer · §8 Build & Deployment Sequence · §9 Resolved Design Decisions · §10 Known Limitations.
-**Status:** All three backends implemented and selectable in `app.py` — Mock and Snapshot (JSON, §7), Warehouse (DuckDB, §6). Backend ↔ phase mapping: `SPEC.md` §4.2.
+**Section map:** §1 Guiding Constraints & Scope · §2 Component Layout · §3 GTFS Topology Ingestion Pipeline · §4 Delay Distribution Pipeline · §5 Route Search & Candidate Generation · §6 DuckDB Warehouse Schema · §7 JSON Backends & Data Access Layer · §8 Build & Deployment Sequence · §9 Resolved Design Decisions · §10 Known Limitations.
+**Status:** All three backends implemented and selectable in `app.py` — Mock and Snapshot (JSON, §7), Warehouse (DuckDB, §6), the last of which a deploy fetches rather than builds (§8.3). Backend ↔ phase mapping: `SPEC.md` §4.2.
 
 ## 1. Guiding Constraints & Scope
 
@@ -18,7 +18,7 @@ def load_dataset(path: Path = MOCK_DATA_PATH) -> MockDataset:
 
 No pipeline changes this signature or the Pydantic models — only which JSON file gets built and which path `load_dataset` points at. Phase 3 doesn't call `load_dataset()` at all (queried per-search rather than loaded whole, §6) but materializes the same `Leg`/`Transfer`/`Route` instances.
 
-Offline-only: fixture files and periodically-downloaded GTFS.DE/piebro archives — never live HAFAS polling or scraping.
+Offline-only: fixture files and periodically-downloaded GTFS.DE/piebro archives — never live HAFAS polling or scraping. A deploy does make one HTTPS request at startup (§8.3), but only to pull down a pre-built `warehouse.duckdb`; no timetable or delay figure is ever read live.
 
 ## 2. Component Layout
 
@@ -71,6 +71,16 @@ data/                     # every dataset lives here -- nothing data-shaped at t
 runs inside a request, imported by `app.py` and `engine.py`. Nothing in
 `pipelines/` imports `routing/`, which is what keeps the ingestion layer out of
 the hot path.
+
+**Why `warehouse_fetch.py` is at the root and not in `pipelines/`.** It looks
+like a download script, and `pipelines/download_raw_data.py` — a genuine
+build-step downloader — is right there. But it runs *inside the app process at
+startup*, reads `st.secrets`, and caches through `@st.cache_resource`: every
+property that puts a module in `pipelines/` is one it doesn't have. The root is
+where app-level modules live, so that's where it goes. It is nonetheless split
+in two: `download_warehouse()` touches nothing but `requests` and the
+filesystem and carries the tests, while only `ensure_warehouse()` reaches for
+`st.secrets` and the cache (§8.3).
 
 `gtfs_time.py` exists because of that split. Leg times are stored date-agnostically
 (§3 step 5), so *encoding* that form is an ingestion job and *decoding* it is a
@@ -274,6 +284,8 @@ WAREHOUSE_URL = "https://github.com/<owner>/<repo>/releases/download/<tag>/wareh
 ```
 
 Cloud's filesystem is ephemeral, so the download repeats after every reboot or redeploy — one ~58 MB GET, not a per-user cost. Editing the secret to point at a new release, then rebooting the app, is the whole upgrade path; the old asset stays downloadable for anyone pinned to it.
+
+**Currently published:** tag `warehouse-2026-08-22`, asset `warehouse.duckdb` (57,683,968 bytes, `sha256:ae68fc4c…01bf6c`), covering the 2026-08-22 .. 2026-09-21 calendar window — the URL the live app's secret points at. The same asset is what `README.md`'s Quickstart offers as an alternative to building the warehouse locally, so a rebuild that changes the schema needs a new tag rather than a replaced asset.
 
 ## 9. Resolved Design Decisions
 

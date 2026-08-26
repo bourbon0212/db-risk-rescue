@@ -4,7 +4,9 @@ Trip planning for German railways that answers the question a timetable can't: *
 
 Standard journey planners show you a scheduled arrival. This one runs a Monte Carlo simulation over historical delay data for every leg of your trip, then reports a **True ETA** — both the typical arrival and the "plan for this if you're unlucky" arrival — alongside a per-transfer risk read and a pre-computed backup plan for each connection that might fail.
 
-Built on offline GTFS.DE timetable data and the [piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data) historical delay archive. No live API calls.
+**[Try it live → db-risk-rescue.streamlit.app](https://db-risk-rescue.streamlit.app/)** — the deployed app, running the full 33-station Warehouse backend over a month-long date window.
+
+Built on offline GTFS.DE timetable data and the [piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data) historical delay archive. No live departure-board APIs and no scraping — every timetable and delay figure comes from an archive downloaded ahead of time.
 
 ![The app showing a Frankfurt to Köln search: a "Plan your trip" panel above ranked route cards, each with scheduled times, an Expected and Safest predicted arrival, and a coloured left edge indicating overall route risk.](assets/screenshot.png)
 
@@ -38,9 +40,9 @@ The sidebar has a **Data source** selector with three backends. Two work immedia
 |---|---|---|
 | **Mock** | Yes | A small hand-authored fixture (11 stations). Fast, good for poking at the UI. |
 | **Snapshot** | Yes | Real GTFS + delay data for a 33-station corridor, baked to one fixed date. |
-| **Warehouse** | **No — needs building** | The same corridor, queryable for *any* date in a month-long window. The default selection. |
+| **Warehouse** | **No — build or download it** | The same corridor, queryable for *any* date in a month-long window. The default selection. |
 
-> **Heads-up on your first run.** Warehouse is selected by default, but its database file is a build artifact and isn't in the repo. When it's missing the app says so in the sidebar and drops to **Snapshot** — still real data, just pinned to one date. Build the warehouse when you want to search other dates.
+> **Heads-up on your first run.** Warehouse is selected by default, but its database file is a build artifact and isn't in the repo. When it's missing the app says so in the sidebar and drops to **Snapshot** — still real data, just pinned to one date. Build or download the warehouse when you want to search other dates.
 
 To build the Warehouse backend yourself (needs `requirements-dev.txt`, and
 downloads a few hundred MB of raw feeds):
@@ -53,11 +55,12 @@ python -m pipelines.download_raw_data
 python -m pipelines.build_warehouse
 ```
 
-A deployed copy of the app can't build anything, so it fetches the finished
-database instead: set a `WAREHOUSE_URL` secret pointing at a hosted
-`warehouse.duckdb` and the app downloads it once on startup. Full recipe —
-GitHub Release, Streamlit Community Cloud settings, what happens when it
-fails — in `DATA_SPEC.md` §8.3.
+Or skip the build entirely — the finished database is published as a GitHub
+Release asset (~58 MB), so you can drop it straight into `data/`:
+
+```bash
+curl -L -o data/warehouse.duckdb https://github.com/bourbon0212/db-risk-rescue/releases/download/warehouse-2026-08-22/warehouse.duckdb
+```
 
 ### Running the tests
 
@@ -68,6 +71,20 @@ pip install -r requirements-dev.txt
 ```bash
 python -m pytest
 ```
+
+### Deploying your own copy
+
+A deployed app can't build anything and can't carry a 58 MB binary through
+git, so it fetches that same release asset at startup: set a `WAREHOUSE_URL`
+secret to the asset's URL and `warehouse_fetch.py` downloads it once per
+container, after which the Warehouse backend behaves exactly as it does
+locally. With no secret set — or a dead one — the app degrades to
+**Snapshot** and says why in the sidebar, so a misconfigured deploy still
+serves real data rather than an error page.
+
+The full recipe (publishing the release, the `share.streamlit.io` fields,
+the Python version, what each failure mode looks like) is `DATA_SPEC.md`
+§8.3.
 
 ---
 
@@ -96,6 +113,7 @@ Three specs, each owning one thing. Pick by what you're changing:
 | Change colours, wording, or layout | `UIUX_SPEC.md` | §2 — the five-state risk system |
 | Work on data ingestion or the warehouse | `DATA_SPEC.md` | §3 (ingestion) or §6 (warehouse schema) |
 | Know why the project looks like this | `SPEC.md` | §7 — development phases |
+| Deploy it, or change how the warehouse is hosted | `DATA_SPEC.md` | §8.3 — release asset + `WAREHOUSE_URL` |
 | Find the known rough edges | `DATA_SPEC.md` §10, `SPEC.md` §8 | |
 
 `CLAUDE.md` is configuration for AI coding agents, not human documentation — you can skip it.
@@ -146,11 +164,24 @@ assets/
 
 .streamlit/
   config.toml        Native Streamlit widget theme (UIUX_SPEC.md §3 owns the values)
+  secrets.toml       WAREHOUSE_URL, if you set one locally — gitignored, never committed
 ```
+
+**Where a new module goes.** The root is for app-level modules — anything
+`app.py` imports directly to run a request. Offline build code goes in
+`pipelines/` (run with `python -m`), query-time route search in `routing/`.
+That split is why `warehouse_fetch.py` sits at the root: it runs at startup
+inside the app, not as a build step. Three root modules import Streamlit —
+`app.py`, `ui_components.py` and `warehouse_fetch.py`; the rest (`models.py`,
+`engine.py`, `data_loader.py`, `db.py`, `gtfs_time.py`) stay framework-free
+so they're testable without a Streamlit runtime. `warehouse_fetch.py` keeps
+its own download half on that side of the line for the same reason, which is
+why it's split in two.
 
 The three files at the top of `data/` are the three backends the sidebar radio
 switches between (`SPEC.md` §4.2). Only the first two are in git — see
-"Missing-data degradation" in `SPEC.md` §4.2 for what happens on a fresh clone.
+"Missing-data degradation" in `SPEC.md` §4.2 for what happens on a fresh clone,
+and `DATA_SPEC.md` §8.3 for how a deploy gets the third.
 
 The three specs (`SPEC.md`, `DATA_SPEC.md`, `UIUX_SPEC.md`) stay at the root
 next to this README, where they're easiest to find, as does `CLAUDE.md` —

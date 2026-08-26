@@ -5,7 +5,7 @@
 Data pipelines and storage live in `DATA_SPEC.md`; colours, wording and layout live in `UIUX_SPEC.md`.
 
 **Section map:** §1 Objective · §2 Core Data Models · §3 Engine · §4 Storage · §5 UI Spec · §6 Core Thresholds & Constants · §7 Development History & Phases · §8 Limitations & Future Work
-**Status:** Phases 1–3 built, tested, merged to `main`.
+**Status:** Phases 1–3.3 built, tested, merged to `main`, and deployed at [db-risk-rescue.streamlit.app](https://db-risk-rescue.streamlit.app/) — serving the Warehouse backend (§4.2) from a hosted database (`DATA_SPEC.md` §8.3).
 
 ## 1. Objective & System Overview
 
@@ -350,6 +350,7 @@ Every hardcoded constant in the app, in one place. If a value changes, update it
 | 3 — DuckDB warehouse | Date-agnostic templates + dynamic calendar resolution | Warehouse | `data/warehouse.duckdb`, full month window |
 | 3.1 — Corridor & query hardening | Corridor-aware leg fix, N+1 query fix, cache/pagination split | Varies per fix (below) | Same warehouse (+ Snapshot's `data/real_dataset.json`, rebuilt) |
 | 3.2 — MCT & platform capture | Station-tier MCT + gradient floor, platform capture | All three | Engine + UI wording addition |
+| 3.3 — Deployment | Warehouse fetched from a hosted URL, runtime/dev requirements split | Warehouse, on a deploy | Same warehouse, hosted as a release asset |
 
 **Phase 1.** Built the Mock dataset, engine, and UI together — the baseline the Pydantic contract and MC algorithm were designed against. Phases 2 and 3 swapped the storage layer beneath that contract without changing it; the only later engine change was Phase 3.2's MCT floor.
 
@@ -367,6 +368,8 @@ Combined: a Leipzig→Munich search that found nothing before 09:27 now finds 07
 
 **Phase 3.2 — MCT & platform capture.** A data audit against the real GTFS.DE feeds found no `transfers.txt`/`min_transfer_time` (motivating §3.6's station-tier proxy + gradient floor) and a genuine but sparse `platform_code` column (motivating §2.3's platform fields, hidden gracefully when absent).
 
+**Phase 3.3 — Deployment.** The one thing that didn't survive contact with a public deploy: `data/warehouse.duckdb` is gitignored, so Streamlit Community Cloud only ever saw Mock and Snapshot, and the default backend silently degraded on every visit. `warehouse_fetch.py` closes it by downloading the file once per container from a `WAREHOUSE_URL` secret pointing at a GitHub Release asset — the file stays out of git's history, and §4.2's degradation ladder still catches every failure mode. No engine, model, or UI code changed. Mechanism and operator steps: `DATA_SPEC.md` §8.3.
+
 ## 8. Limitations & Future Work
 
 ### 8.1 Known Engine Limitations
@@ -375,6 +378,7 @@ Combined: a Leipzig→Munich search that found nothing before 09:27 now finds 07
 - **One level of re-routing on miss** (§3.4) — a miss *within* a fallback route resolves via headway wait, not a second search.
 - **2-transfer cap** (§6) — closes most real corridor pairs but isn't a hard architectural limit.
 - **MCT is a touch-count proxy**, not real platform geometry — data-side detail: `DATA_SPEC.md` §10.
+- **The fixed seed pins results per machine, not across machines** — §6's seed makes a route's ETAs stable across Streamlit reruns, which is all it promises. A probability landing exactly on a display-rounding boundary can still render one point apart on two platforms (observed: a transfer at `0.5549999999999999` locally showed 55%, and 56% on the deployed container).
 
 ### 8.2 Future Roadmap (Phase 4+)
 

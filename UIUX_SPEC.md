@@ -7,7 +7,7 @@ If you only read one section, make it **§2**: the five-state risk system is whe
 This doc names engine-produced values but never computes them — thresholds and maths belong to `SPEC.md` (§6 for constants). `design/design_mock.html` is the reference mockup the visual system was built from.
 
 **Section map:** §1 Design Philosophy & Principles · §2 The Five-State Risk System · §3 Color Palette & Design Tokens · §4 Component Architecture · §5 Technical Implementation Notes · §6 Design History Log.
-**Status:** Implemented in `ui_components.py`; §5.4 confirms parity against the running code.
+**Status:** Implemented in `ui_components.py`; §5.4 confirms parity against the running code and against the deployed app.
 
 ## 1. Design Philosophy & Principles
 
@@ -54,7 +54,7 @@ The complete state → color → phrase → condition → figure mapping. This i
 
 Every phrase is action-first, never a bare risk level: there is no reading of "Miss likely (38% risk)" that could be mistaken for reassurance (§6 #2).
 
-**One line, no exceptions:** `<Action phrase> (<X%> risk) · <trailing figure>`. No station name, no extra clause, no second sentence — the station already appears above the transfer bar in the itinerary.
+**One line:** `<Action phrase> (<X%> risk) · <trailing figure>`, plus the optional platform pair described in §4.4 and nothing else. No station name, no extra clause, no second sentence — the station already appears above the transfer bar in the itinerary.
 
 ### 2.3 Trailing-figure rules
 
@@ -200,7 +200,9 @@ One continuous CSS Grid (`grid-template-columns: 42px 20px 1fr` — time / conne
 
 **Line states:** solid = actively riding; dashed = the transfer/waiting gap, from the hollow dot through the transfer-bar row to the next solid dot.
 
-**Transfer warning bar.** Its own grid row's station-column cell (not a positioned overlay) — inherits grid alignment automatically. Soft background fill per §2.2, no border of its own (§3.3). Content: the one-line pattern from §2.2/§2.3.
+**Transfer warning bar.** Its own grid row's station-column cell (not a positioned overlay) — inherits grid alignment automatically. Soft background fill per §2.2, no border of its own (§3.3). Content: the one-line pattern from §2.2/§2.3, plus the optional platform pair below.
+
+**Platform pair.** `Plat. <arriving> → Plat. <departing>`, appended to the transfer bar's line at the trailing figure's weight (12px/400, `opacity: .75`) so the risk phrase still leads. Rendered **only when both** the arriving leg's `destination_platform` and the departing leg's `origin_platform` exist; if either is missing the span is omitted entirely — never a dash, "n/a", or any other placeholder. GTFS platform coverage is real but sparse (`DATA_SPEC.md` §3.3), so roughly 3% of transfers show this and the rest simply don't; the inconsistency is the honest rendering of uneven data, not a gap to fill.
 
 ## 5. Technical Implementation Notes
 
@@ -266,7 +268,9 @@ The button's own label is empty — the swap glyph is a Material Symbol icon (`s
 
 ### 5.4 Implementation status
 
-`ui_components.py` was rewritten to match this spec (the DB Navigator-style rebuild) and stays in sync with it: no emoji anywhere in the app shell (§1.2); the single-line five-phrase risk wording with no color legend (§2.2); correct RE/RB chip colors (§3.2); the bordered, grouped "Plan your trip" search card with swap control (§4.1); the grouped Predicted Arrival panel (§4.3); native `<details>`/`<summary>`, not `st.expander` (§5.1); the colored left-edge card strip, present in both collapsed and expanded states (§3.3); the single continuous CSS Grid timetable (§4.4); and the off-white `--page-bg` app background behind white cards (§3.1), applied both natively via `.streamlit/config.toml`'s `backgroundColor` and via CSS on `[data-testid="stApp"]`/`[data-testid="stMain"]` — all confirmed present in the running code as of this revision.
+`ui_components.py` was rewritten to match this spec (the DB Navigator-style rebuild) and stays in sync with it: no emoji anywhere in the app shell (§1.2); the single-line five-phrase risk wording with no color legend (§2.2); correct RE/RB chip colors (§3.2); the bordered, grouped "Plan your trip" search card with swap control (§4.1); the grouped Predicted Arrival panel (§4.3); native `<details>`/`<summary>`, not `st.expander` (§5.1); the colored left-edge card strip, present in both collapsed and expanded states (§3.3); the single continuous CSS Grid timetable with its optional platform pair (§4.4); and the off-white `--page-bg` app background behind white cards (§3.1), applied both natively via `.streamlit/config.toml`'s `backgroundColor` and via CSS on `[data-testid="stApp"]`/`[data-testid="stMain"]` — all confirmed present in the running code as of this revision.
+
+The same list is confirmed rendering on the deployed app (`SPEC.md` §7, Phase 3.3), not just locally: every row of §2.2's mapping table — both causes of `Tight connection` included — was reproduced there against real Warehouse searches, along with the platform pair, both sort orders, "More" pagination, and the no-routes empty state.
 
 ## 6. Design History Log
 
