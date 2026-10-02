@@ -19,6 +19,7 @@ by this module -- the Mock/Snapshot JSON path keeps working unmodified
 alongside this one (SPEC.md §4.1).
 """
 
+import csv
 import tempfile
 import zipfile
 from pathlib import Path
@@ -209,6 +210,28 @@ def _find_latest_delay_parquet(raw_dir: Path) -> Path | None:
     return candidates[-1] if candidates else None
 
 
+def _matched_corridor_stop_ids(gtfs_dir: Path, corridor_stop_ids: set[str]) -> set[str]:
+    """Which of the crosswalk's GTFS stop_ids actually exist in this feed's stops.txt."""
+    with (gtfs_dir / "stops.txt").open(encoding="utf-8-sig", newline="") as f:
+        return {row["stop_id"] for row in csv.DictReader(f)} & corridor_stop_ids
+
+
+def _require_crosswalk_matches(matched: set[str], corridor_stop_ids: set[str]) -> None:
+    """GTFS.DE renumbered every stop_id between releases once already
+    (2026-09-26), and a crosswalk that matches nothing doesn't error -- the
+    scoping filters just keep zero trips and the build writes an empty
+    warehouse. Fail here instead, before write_warehouse() clears the
+    existing file."""
+    if not matched:
+        raise ValueError(
+            f"None of the {len(corridor_stop_ids)} crosswalk stop_ids appear in the downloaded "
+            "GTFS feeds' stops.txt, so the warehouse would be empty. GTFS.DE has most likely "
+            "renumbered its stop_ids: re-key GTFS_STOP_ID_TO_STATION_ID in "
+            "pipelines/id_crosswalk.py against the new stops.txt (match by station name + "
+            "coordinates)."
+        )
+
+
 def build_real_warehouse(
     conn: duckdb.DuckDBPyConnection,
     raw_dir: Path = RAW_DATA_DIR,
@@ -227,6 +250,7 @@ def build_real_warehouse(
     all_leg_templates: list[LegTemplate] = []
     all_calendar_rows = []
     all_calendar_exceptions = []
+    matched_stop_ids: set[str] = set()
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
@@ -236,12 +260,15 @@ def build_real_warehouse(
             with zipfile.ZipFile(zip_path) as zf:
                 zf.extractall(extracted_dir)
 
+            matched_stop_ids |= _matched_corridor_stop_ids(extracted_dir, corridor_stop_ids)
             scope_gtfs_feed_multi_day(extracted_dir, scoped_dir, corridor_stop_ids)
             all_lines += parse_lines(scoped_dir)
             all_trips += parse_trips(scoped_dir)
             all_leg_templates += parse_corridor_leg_templates(scoped_dir, corridor_stop_ids)
             all_calendar_rows += parse_calendar(scoped_dir)
             all_calendar_exceptions += parse_calendar_exceptions(scoped_dir)
+
+    _require_crosswalk_matches(matched_stop_ids, corridor_stop_ids)
 
     seen_line_ids: set[str] = set()
     lines: list[Line] = []
@@ -261,6 +288,13 @@ def build_real_warehouse(
     # to be absent (same fix as build_real_dataset's parse_corridor_legs).
     corridor_leg_templates = _dedupe_leg_templates(all_leg_templates)
     transfer_templates = derive_transfer_templates(corridor_leg_templates)
+
+    if not corridor_leg_templates:
+        raise ValueError(
+            "The crosswalk's stop_ids exist in the feeds, but no DB-operated trip connects two "
+            "corridor stations, so the warehouse would be empty. Check the feeds' agency names "
+            "(gtfs_scope._DB_AGENCY_PREFIXES) and route types."
+        )
 
     leg_templates = _crosswalk_leg_templates(corridor_leg_templates)
     transfer_templates = _crosswalk_transfer_templates(transfer_templates)

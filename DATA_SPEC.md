@@ -293,7 +293,7 @@ Originally open questions, kept here so the reasoning stays visible for future r
 
 ### 9.1 Geographic/service scope
 
-Expanded past the original 11-station mock mirror to a 33-station "Golden 35" corridor (`id_crosswalk.py`) covering major ICE hubs, interchange points, and targeted connector stations — enough network for real routing complexity (multi-hop journeys, real transfer density) rather than disconnected point-to-point legs. Every `stop_id` in the crosswalk was looked up against the downloaded fv/rv feeds, not guessed.
+Expanded past the original 11-station mock mirror to a 33-station "Golden 35" corridor (`id_crosswalk.py`) covering major ICE hubs, interchange points, and targeted connector stations — enough network for real routing complexity (multi-hop journeys, real transfer density) rather than disconnected point-to-point legs. Every `stop_id` in the crosswalk was looked up against the downloaded fv/rv feeds, not guessed. **The IDs are not stable across GTFS.DE releases:** the 2026-09-26 feeds renumbered every one of them, and gtfs.de documents no stability guarantee. `build_real_warehouse` therefore raises (before touching the existing warehouse file) if none of the crosswalk's `stop_id`s appear in the feeds' `stops.txt`, or if they do but no corridor-to-corridor leg results; the fix is to re-key `GTFS_STOP_ID_TO_STATION_ID` by station name + coordinates against the new `stops.txt`.
 
 The two paragraphs below are *background* — skip them unless you're editing the crosswalk itself.
 

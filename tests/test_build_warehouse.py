@@ -4,10 +4,19 @@ data as test_build_dataset.py's build_dataset() smoke test) and checks the
 written DuckDB warehouse end to end.
 """
 
+import zipfile
+
 import duckdb
 import pytest
 
-from pipelines.build_warehouse import build_warehouse, demo_historical_delays
+import pipelines.build_warehouse as build_warehouse_module
+from pipelines.build_warehouse import (
+    _matched_corridor_stop_ids,
+    _require_crosswalk_matches,
+    build_real_warehouse,
+    build_warehouse,
+    demo_historical_delays,
+)
 from pipelines.build_dataset import DEMO_GTFS_DIR
 from pipelines.gtfs_ingest import LINE_TYPES
 
@@ -104,3 +113,42 @@ def test_leg_templates_platform_columns_exist_and_are_nullable(conn):
     rows = conn.execute("SELECT origin_platform, destination_platform FROM leg_templates").fetchall()
     assert len(rows) == 6
     assert all(origin is None and dest is None for origin, dest in rows)
+
+
+def test_matched_corridor_stop_ids_finds_crosswalk_ids_in_a_feed():
+    corridor = set(build_warehouse_module.GTFS_STOP_ID_TO_STATION_ID)
+    assert _matched_corridor_stop_ids(DEMO_GTFS_DIR, corridor) == {"343024", "2678", "39355"}
+
+
+def test_require_crosswalk_matches_raises_when_nothing_matched():
+    with pytest.raises(ValueError, match="renumbered"):
+        _require_crosswalk_matches(set(), {"1", "2"})
+
+
+def test_require_crosswalk_matches_passes_with_any_match():
+    _require_crosswalk_matches({"1"}, {"1", "2"})
+
+
+def test_real_build_with_a_stale_crosswalk_fails_and_keeps_the_existing_warehouse(
+    tmp_path, monkeypatch
+):
+    """The 2026-09-26 failure mode: every crosswalk stop_id missing from the
+    feed. The build must raise before write_warehouse() clears anything."""
+    feed_zip = tmp_path / "gtfs_fv_latest.zip"
+    with zipfile.ZipFile(feed_zip, "w") as zf:
+        for path in DEMO_GTFS_DIR.iterdir():
+            zf.write(path, path.name)
+    monkeypatch.setattr(build_warehouse_module, "REAL_GTFS_ZIPS", {"fv": feed_zip})
+    monkeypatch.setattr(
+        build_warehouse_module, "GTFS_STOP_ID_TO_STATION_ID", {"STALE_STOP_ID": "DE_FRA_HBF"}
+    )
+
+    connection = duckdb.connect(":memory:")
+    build_warehouse(connection, DEMO_GTFS_DIR, demo_historical_delays())
+    legs_before = _count(connection, "leg_templates")
+
+    with pytest.raises(ValueError, match="renumbered"):
+        build_real_warehouse(connection, raw_dir=tmp_path)
+
+    assert _count(connection, "leg_templates") == legs_before > 0
+    connection.close()
