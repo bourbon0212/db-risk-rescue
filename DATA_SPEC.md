@@ -171,7 +171,7 @@ Both backends track visited stations while extending a candidate and stop as soo
 
 Store topology **date-agnostically** — one row per template leg/transfer regardless of calendar span — and resolve which are running on a given date as SQL at query time, instead of baking one date's answer in at build time (§7's approach). Delay distributions need no date dimension at all (§4).
 
-The payoff is that a full month of calendar (current build: 2026-08-22..2026-09-21) lives in one ~55MB file rather than a JSON snapshot per day. That file size tracks the size of the network — `transfer_templates` dominates it (§10) — and not the length of the calendar window, which is precisely what date-agnostic storage buys: ingesting a longer window costs almost nothing.
+The payoff is that a full month of calendar (current build: 2026-09-26..2026-10-26) lives in one ~71MB file rather than a JSON snapshot per day. That file size tracks the size of the network — `transfer_templates` dominates it (§10) — and not the length of the calendar window, which is precisely what date-agnostic storage buys: ingesting a longer window costs almost nothing.
 
 ### 6.2 Tables
 
@@ -258,9 +258,9 @@ Nothing in `models.py`, `engine.py`, `ui_components.py`, or Phase 1/2 tests need
 
 ### 8.3 Deploying to Streamlit Community Cloud
 
-Two of the three backends deploy themselves: `data/mock_data.json` and `data/real_dataset.json` are committed, so a Cloud deploy of `main` serves Snapshot with no extra work. The Warehouse backend is the problem — `data/warehouse.duckdb` is a ~58 MB binary build output, gitignored precisely so it never enters the repo's history, and Cloud only ever receives what's in git.
+Two of the three backends deploy themselves: `data/mock_data.json` and `data/real_dataset.json` are committed, so a Cloud deploy of `main` serves Snapshot with no extra work. The Warehouse backend is the problem — `data/warehouse.duckdb` is a ~71 MB binary build output, gitignored precisely so it never enters the repo's history, and Cloud only ever receives what's in git.
 
-**The strategy: host the file as a GitHub Release asset and fetch it at startup.** A release asset is versioned, public without a token, and lives outside the git object store, so re-uploading a rebuilt warehouse costs nothing in repo size. Git LFS was the alternative and was rejected: it puts the file back in the clone path (LFS bandwidth quotas, and a Cloud build that pays the 58 MB on every redeploy whether or not anyone selects Warehouse).
+**The strategy: host the file as a GitHub Release asset and fetch it at startup.** A release asset is versioned, public without a token, and lives outside the git object store, so re-uploading a rebuilt warehouse costs nothing in repo size. Git LFS was the alternative and was rejected: it puts the file back in the clone path (LFS bandwidth quotas, and a Cloud build that pays the 71 MB on every redeploy whether or not anyone selects Warehouse).
 
 **`warehouse_fetch.py`** implements the fetch, in two halves — `download_warehouse()` is pure `requests` + filesystem and carries the tests; `ensure_warehouse()` is the Streamlit-aware wrapper `app.py` calls. Four properties are load-bearing:
 
@@ -283,9 +283,9 @@ Every failure returns a reason string instead of raising, so `app.py`'s degradat
 WAREHOUSE_URL = "https://github.com/<owner>/<repo>/releases/download/<tag>/warehouse.duckdb"
 ```
 
-Cloud's filesystem is ephemeral, so the download repeats after every reboot or redeploy — one ~58 MB GET, not a per-user cost. Editing the secret to point at a new release, then rebooting the app, is the whole upgrade path; the old asset stays downloadable for anyone pinned to it.
+Cloud's filesystem is ephemeral, so the download repeats after every reboot or redeploy — one ~71 MB GET, not a per-user cost. Editing the secret to point at a new release, then rebooting the app, is the whole upgrade path; the old asset stays downloadable for anyone pinned to it.
 
-**Currently published:** tag `warehouse-2026-08-22`, asset `warehouse.duckdb` (57,683,968 bytes, `sha256:ae68fc4c…01bf6c`), covering the 2026-08-22 .. 2026-09-21 calendar window — the URL the live app's secret points at. The same asset is what `README.md`'s Quickstart offers as an alternative to building the warehouse locally, so a rebuild that changes the schema needs a new tag rather than a replaced asset.
+**Currently published:** tag `warehouse-2026-09-26`, asset `warehouse.duckdb` (70,529,024 bytes, `sha256:f57e7958…23835a`), covering the 2026-09-26 .. 2026-10-26 calendar window — the URL the live app's secret should point at. The previous tag, `warehouse-2026-08-22` (57,683,968 bytes, 2026-08-22 .. 2026-09-21), stays downloadable for anyone pinned to it. The same asset is what `README.md`'s Quickstart offers as an alternative to building the warehouse locally, so a rebuild that changes the schema needs a new tag rather than a replaced asset.
 
 ## 9. Resolved Design Decisions
 

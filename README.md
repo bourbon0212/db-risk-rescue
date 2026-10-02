@@ -56,10 +56,10 @@ python -m pipelines.build_warehouse
 ```
 
 Or skip the build entirely — the finished database is published as a GitHub
-Release asset (~58 MB), so you can drop it straight into `data/`:
+Release asset (~71 MB), so you can drop it straight into `data/`:
 
 ```bash
-curl -L -o data/warehouse.duckdb https://github.com/bourbon0212/db-risk-rescue/releases/download/warehouse-2026-08-22/warehouse.duckdb
+curl -L -o data/warehouse.duckdb https://github.com/bourbon0212/db-risk-rescue/releases/download/warehouse-2026-09-26/warehouse.duckdb
 ```
 
 ### Running the tests
@@ -74,7 +74,7 @@ python -m pytest
 
 ### Deploying your own copy
 
-A deployed app can't build anything and can't carry a 58 MB binary through
+A deployed app can't build anything and can't carry a 71 MB binary through
 git, so it fetches that same release asset at startup: set a `WAREHOUSE_URL`
 secret to the asset's URL and `warehouse_fetch.py` downloads it once per
 container, after which the Warehouse backend behaves exactly as it does
