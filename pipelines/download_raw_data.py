@@ -42,7 +42,7 @@ except ImportError as exc:  # pragma: no cover - human-run script, not exercised
 
 RAW_DATA_DIR = Path(__file__).parent.parent / "data" / "raw"
 
-# Verified live against https://gtfs.de/de/feeds/ on 2026-08-23.
+# Verified live against https://gtfs.de/de/feeds/ on 2026-10-02.
 GTFS_FEEDS: dict[str, str] = {
     "fv": "https://download.gtfs.de/germany/fv_free/latest.zip",  # ICE / IC / EC
     "rv": "https://download.gtfs.de/germany/rv_free/latest.zip",  # RE / RB / S-Bahn
@@ -52,7 +52,7 @@ PIEBRO_BASE_URL = (
     "https://huggingface.co/datasets/piebro/deutsche-bahn-data"
     "/resolve/main/monthly_processed_data"
 )
-DEFAULT_MONTHS = ["2026-07"]  # most recent complete month as of 2026-08-23
+DEFAULT_MONTHS = ["2026-09"]  # most recent complete month as of 2026-10-02
 
 
 def _download_with_progress(url: str, dest_path: Path, force: bool = False) -> Path:

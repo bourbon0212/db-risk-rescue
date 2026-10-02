@@ -11,9 +11,9 @@ MOCK_DATA_PATH = Path(__file__).parent.parent / "data" / "mock_data.json"
 
 
 def test_to_station_id_maps_known_stations():
-    assert to_station_id("176697") == "DE_FRA_HBF"  # Frankfurt (Main) Hauptbahnhof
-    assert to_station_id("517455") == "DE_KOL_HBF"  # Koeln Hbf
-    assert to_station_id("183027") == "DE_MUC_MAR"  # Marienplatz
+    assert to_station_id("343024") == "DE_FRA_HBF"  # Frankfurt (Main) Hauptbahnhof
+    assert to_station_id("2678") == "DE_KOL_HBF"  # Koeln Hbf
+    assert to_station_id("360857") == "DE_MUC_MAR"  # Marienplatz
 
 
 def test_to_station_id_raises_for_unmapped_stop():
@@ -44,19 +44,19 @@ def test_crosswalk_is_legitimately_many_to_one_for_split_stations():
     the same station_id."""
     values = list(GTFS_STOP_ID_TO_STATION_ID.values())
     assert len(values) > len(set(values))
-    assert to_station_id("176697") == to_station_id("335920") == "DE_FRA_HBF"
-    assert to_station_id("668361") == to_station_id("362545") == "DE_STG_HBF"
-    assert to_station_id("53188") == to_station_id("601768") == "DE_LEI_HBF"
-    assert to_station_id("428519") == to_station_id("52456") == "DE_HAM_HBF"
-    assert to_station_id("416646") == to_station_id("166299") == "DE_ERF_HBF"
+    assert to_station_id("343024") == to_station_id("30764") == "DE_FRA_HBF"
+    assert to_station_id("458291") == to_station_id("604648") == "DE_STG_HBF"
+    assert to_station_id("185848") == to_station_id("187869") == "DE_LEI_HBF"
+    assert to_station_id("333381") == to_station_id("634389") == "DE_HAM_HBF"
+    assert to_station_id("620981") == to_station_id("466504") == "DE_ERF_HBF"
 
 
 def test_newly_added_hub_stations_are_mapped():
     """Spot-check the explicitly requested hub/routing stations that were
     missing before this expansion."""
-    assert to_station_id("416646") == "DE_ERF_HBF"  # Erfurt Hbf
-    assert to_station_id("531677") == "DE_HAL_HBF"  # Halle (Saale) Hbf
-    assert to_station_id("19112") == "DE_KAS_WIL"  # Kassel-Wilhelmshöhe
+    assert to_station_id("620981") == "DE_ERF_HBF"  # Erfurt Hbf
+    assert to_station_id("121402") == "DE_HAL_HBF"  # Halle (Saale) Hbf
+    assert to_station_id("321266") == "DE_KAS_WIL"  # Kassel-Wilhelmshöhe
 
 
 def test_station_names_covers_exactly_the_crosswalks_station_ids():

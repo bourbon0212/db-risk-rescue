@@ -11,6 +11,7 @@ routing/route_search_duckdb.py -- this module never touches models.py.
 """
 
 import duckdb
+import pandas as pd
 
 from models import Line, Station
 from pipelines.calendar_ingest import ServiceCalendarException, ServiceCalendarRow
@@ -122,6 +123,18 @@ def _executemany(conn: duckdb.DuckDBPyConnection, sql: str, rows: list[tuple]) -
         conn.executemany(sql, rows)
 
 
+def _bulk_insert(
+    conn: duckdb.DuckDBPyConnection, table: str, columns: list[str], rows: list[tuple]
+) -> None:
+    """Vectorised INSERT for the one table big enough to matter: a real build
+    has ~280k transfer_templates, and executemany() runs one statement per
+    row (over an hour on a OneDrive-synced data/ folder). Only for tables with
+    no NULLable columns, where pandas' type inference can't guess wrong."""
+    if rows:
+        frame = pd.DataFrame(rows, columns=columns)  # noqa: F841 -- read by name from the SQL below
+        conn.execute(f"INSERT INTO {table} SELECT * FROM frame")
+
+
 def write_warehouse(
     conn: duckdb.DuckDBPyConnection,
     stations: list[Station],
@@ -172,9 +185,18 @@ def write_warehouse(
             for lt in leg_templates
         ],
     )
-    _executemany(
+    _bulk_insert(
         conn,
-        "INSERT INTO transfer_templates VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "transfer_templates",
+        [
+            "transfer_id",
+            "station_id",
+            "from_leg_id",
+            "to_leg_id",
+            "from_trip_id",
+            "to_trip_id",
+            "buffer_minutes",
+        ],
         [
             (
                 tt.transfer_id,

@@ -8,53 +8,56 @@ two GTFS parent nodes -- so callers must go through to_station_id() rather
 than assuming a 1:1 stop_id/station_id relationship.
 """
 
+# IDs re-keyed 2026-10-02: the 2026-09-26 GTFS.DE feeds renumbered every stop_id
+# (matched by station name + coordinates against the new stops.txt parents).
+# Visit counts in the comments below predate that and are indicative only.
 GTFS_STOP_ID_TO_STATION_ID: dict[str, str] = {
     # --- original 11-station corridor (DATA_SPEC.md §9.1) ---
-    "176697": "DE_FRA_HBF",  # Frankfurt (Main) Hauptbahnhof
-    "335920": "DE_FRA_HBF",  # Frankfurt (Main) Hauptbahnhof tief (S-Bahn tunnel level)
-    "517455": "DE_KOL_HBF",  # Koeln Hbf
-    "668361": "DE_STG_HBF",  # Stuttgart Hbf -- "Hauptbahnhof (oben)" (elevated tracks)
-    "362545": "DE_STG_HBF",  # Stuttgart Hbf (tief) -- underground S-Bahn/regional level
-    "582139": "DE_MAN_HBF",  # Mannheim, Hauptbahnhof
-    "635340": "DE_HEI_HBF",  # Heidelberg, Hauptbahnhof
-    "9941": "DE_MUC_HBF",  # Muenchen Hbf (long-distance/regional surface node)
-    "690993": "DE_MUC_HBF",  # Muenchen Hbf -- S-Bahn tunnel level ("Hauptbahnhof (U, Tram)")
-    "99055": "DE_NUE_HBF",  # Nuernberg Hbf
-    "53188": "DE_LEI_HBF",  # Leipzig Hbf
-    "601768": "DE_LEI_HBF",  # Leipzig Hbf (tief) -- City-Tunnel level
-    "613345": "DE_BER_HBF",  # "S+U Berlin Hauptbahnhof" -- DELFI's node name for Berlin Hbf
-    "183027": "DE_MUC_MAR",  # Marienplatz (Muenchen)
-    "456005": "DE_MUC_OST",  # Ostbahnhof (Muenchen) -- i.e. Muenchen Ost
+    "343024": "DE_FRA_HBF",  # Frankfurt (Main) Hauptbahnhof
+    "30764": "DE_FRA_HBF",  # Frankfurt (Main) Hauptbahnhof tief (S-Bahn tunnel level)
+    "2678": "DE_KOL_HBF",  # Koeln Hbf
+    "458291": "DE_STG_HBF",  # Stuttgart Hbf -- "Hauptbahnhof (oben)" (elevated tracks)
+    "604648": "DE_STG_HBF",  # Stuttgart Hbf (tief) -- underground S-Bahn/regional level
+    "508911": "DE_MAN_HBF",  # Mannheim, Hauptbahnhof
+    "123740": "DE_HEI_HBF",  # Heidelberg, Hauptbahnhof
+    "39355": "DE_MUC_HBF",  # Muenchen Hbf (long-distance/regional surface node)
+    "259093": "DE_MUC_HBF",  # Muenchen Hbf -- S-Bahn tunnel level ("Hauptbahnhof (U, Tram)")
+    "570977": "DE_NUE_HBF",  # Nuernberg Hbf
+    "185848": "DE_LEI_HBF",  # Leipzig Hbf
+    "187869": "DE_LEI_HBF",  # Leipzig Hbf (tief) -- City-Tunnel level
+    "462566": "DE_BER_HBF",  # "S+U Berlin Hauptbahnhof" -- DELFI's node name for Berlin Hbf
+    "360857": "DE_MUC_MAR",  # Marienplatz (Muenchen)
+    "440508": "DE_MUC_OST",  # Ostbahnhof (Muenchen) -- i.e. Muenchen Ost
     # --- "Golden 35" expansion: hubs/routing stations ---
-    "416646": "DE_ERF_HBF",  # Erfurt, Hauptbahnhof (dominant node, 1,146 visits)
-    "166299": "DE_ERF_HBF",  # Erfurt Hbf (minor secondary node, 34 visits, rv only)
-    "531677": "DE_HAL_HBF",  # Halle(Saale)Hbf
-    "19112": "DE_KAS_WIL",  # Kassel Bahnhof Wilhelmshoehe
-    "341144": "DE_KAS_WIL",  # Kassel Bahnhof Wilhelmshoehe, Bereich Gleis 7/8
-    "631640": "DE_WUE_HBF",  # Wuerzburg Hbf
-    "93866": "DE_HAN_HBF",  # Hannover Hauptbahnhof
+    "620981": "DE_ERF_HBF",  # Erfurt, Hauptbahnhof (dominant node, 1,146 visits)
+    "466504": "DE_ERF_HBF",  # Erfurt Hbf (minor secondary node, 34 visits, rv only)
+    "121402": "DE_HAL_HBF",  # Halle(Saale)Hbf
+    "321266": "DE_KAS_WIL",  # Kassel Bahnhof Wilhelmshoehe
+    "556318": "DE_KAS_WIL",  # Kassel Bahnhof Wilhelmshoehe, Bereich Gleis 7/8
+    "434131": "DE_WUE_HBF",  # Wuerzburg Hbf
+    "160713": "DE_HAN_HBF",  # Hannover Hauptbahnhof
     # --- major/regional endpoints ---
-    "428519": "DE_HAM_HBF",  # Hamburg, Hamburg Hbf (long-distance node)
-    "52456": "DE_HAM_HBF",  # Hamburg, HBF/Kirchenallee -- the S-Bahn node (~4,686 visits)
-    "80740": "DE_TUE_HBF",  # Tuebingen Hauptbahnhof
-    "422410": "DE_BGD_HBF",  # Berchtesgaden Hbf
+    "333381": "DE_HAM_HBF",  # Hamburg, Hamburg Hbf (long-distance node)
+    "634389": "DE_HAM_HBF",  # Hamburg, HBF/Kirchenallee -- the S-Bahn node (~4,686 visits)
+    "567829": "DE_TUE_HBF",  # Tuebingen Hauptbahnhof
+    "2197": "DE_BGD_HBF",  # Berchtesgaden Hbf
     # --- satellite/relief stations ---
-    "391201": "DE_BER_SKZ",  # S Suedkreuz Bhf (Berlin)
-    "446591": "DE_BER_SPD",  # S Spandau Bhf (Berlin)
-    "95437": "DE_KOL_MSD",  # Koeln Messe/Deutz Bf
-    "545038": "DE_MUC_PAS",  # Pasing (Muenchen Pasing)
+    "326584": "DE_BER_SKZ",  # S Suedkreuz Bhf (Berlin)
+    "69614": "DE_BER_SPD",  # S Spandau Bhf (Berlin)
+    "166210": "DE_KOL_MSD",  # Koeln Messe/Deutz Bf
+    "199359": "DE_MUC_PAS",  # Pasing (Muenchen Pasing)
     # --- additional major ICE stops ---
-    "691821": "DE_DUS_HBF",  # Duesseldorf Hbf
-    "640892": "DE_DOR_HBF",  # Dortmund Hbf
-    "224643": "DE_DRE_HBF",  # Dresden Hauptbahnhof
-    "477761": "DE_BRE_HBF",  # Bremen Hbf
-    "267257": "DE_ESS_HBF",  # Essen Hbf
-    "497089": "DE_KAR_HBF",  # Karlsruhe Hauptbahnhof
-    "436294": "DE_BON_HBF",  # Bonn Hbf
+    "126321": "DE_DUS_HBF",  # Duesseldorf Hbf
+    "64583": "DE_DOR_HBF",  # Dortmund Hbf
+    "641615": "DE_DRE_HBF",  # Dresden Hauptbahnhof
+    "451591": "DE_BRE_HBF",  # Bremen Hbf
+    "351643": "DE_ESS_HBF",  # Essen Hbf
+    "101172": "DE_KAR_HBF",  # Karlsruhe Hauptbahnhof
+    "505281": "DE_BON_HBF",  # Bonn Hbf
     # --- connector stations (unlock a previously "one hop away" station) ---
-    "629950": "DE_REU_HBF",  # Reutlingen Hauptbahnhof -- unlocks Tuebingen Hbf
-    "252148": "DE_FRL",  # Freilassing -- unlocks Berchtesgaden Hbf
-    "553920": "DE_DRE_NST",  # Dresden Bahnhof Neustadt -- unlocks Dresden Hbf
+    "366614": "DE_REU_HBF",  # Reutlingen Hauptbahnhof -- unlocks Tuebingen Hbf
+    "194471": "DE_FRL",  # Freilassing -- unlocks Berchtesgaden Hbf
+    "234042": "DE_DRE_NST",  # Dresden Bahnhof Neustadt -- unlocks Dresden Hbf
 }
 
 # Canonical display names for build_real_dataset()'s Station objects. The
